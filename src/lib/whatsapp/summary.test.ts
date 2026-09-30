@@ -53,9 +53,9 @@ describe('WhatsApp Shift Summary Utility', () => {
     assert.strictEqual(sanitizeWhatsAppNumber('+27-82-999-4321'), '27829994321');
   });
 
-  it('builds a valid wa.me URL with prefilled message', () => {
+  it('builds a valid direct WhatsApp URL with prefilled message', () => {
     const url = buildWhatsAppLink('+27 82 123 4567', 'Hello Dawie');
-    assert.strictEqual(url, 'https://wa.me/27821234567?text=Hello%20Dawie');
+    assert.strictEqual(url, 'https://api.whatsapp.com/send?phone=27821234567&text=Hello%20Dawie');
   });
 
   it('handles zero checkpoints gracefully without division by zero', () => {

@@ -71,11 +71,12 @@ export function sanitizeWhatsAppNumber(phone: string): string {
 }
 
 /**
- * Generates direct wa.me link with encoded text message
+ * Generates direct WhatsApp send link with encoded text message
+ * Uses api.whatsapp.com to preserve 4-byte UTF-8 emojis without wa.me 302 redirect replacement
  */
 export function buildWhatsAppLink(rawPhone: string, message: string): string {
   const phone = sanitizeWhatsAppNumber(rawPhone);
-  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+  return `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
 }
 
 /**

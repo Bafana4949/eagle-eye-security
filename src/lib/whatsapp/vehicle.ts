@@ -1,4 +1,4 @@
-import { buildWhatsAppLink } from './summary';
+import { buildWhatsAppLink, copySummaryToClipboard } from './summary';
 
 /**
  * Designated WhatsApp Dispatch Number for all vehicle licence disc scans (IN and OUT)
@@ -28,6 +28,7 @@ export interface VehicleNotificationData {
 
 /**
  * Formats scanned vehicle licence disc information into a structured, professional WhatsApp message
+ * Uses standard, highly-compatible Unicode emojis recognized by all WhatsApp clients
  */
 export function formatVehicleWhatsAppMessage(data: VehicleNotificationData): string {
   const isEntry = data.direction === 'in';
@@ -83,7 +84,7 @@ export function formatVehicleWhatsAppMessage(data: VehicleNotificationData): str
     lines.push(`🔢 VIN: ${data.vinNumber.trim()}`);
   }
   if (data.engineNumber) {
-    lines.push(`⚙️ ENGINE NO: ${data.engineNumber.trim()}`);
+    lines.push(`🔧 ENGINE NO: ${data.engineNumber.trim()}`);
   }
 
   if (data.driverName || data.driverPhone) {
@@ -96,14 +97,14 @@ export function formatVehicleWhatsAppMessage(data: VehicleNotificationData): str
     lines.push(`🏢 PURPOSE / CO: ${visitDetails}`);
   }
 
-  lines.push(`⏱️ TIME: ${formattedTime}`);
+  lines.push(`⏰ TIME: ${formattedTime}`);
 
   if (dwellText) {
     lines.push(`⏳ TIME ON PREMISES: ${dwellText}`);
   }
 
   if (data.guardName) {
-    lines.push(`🛡️ GUARD: ${data.guardName}`);
+    lines.push(`👮 GUARD: ${data.guardName}`);
   }
 
   if (data.siteName) {
@@ -117,7 +118,7 @@ export function formatVehicleWhatsAppMessage(data: VehicleNotificationData): str
 }
 
 /**
- * Generates direct wa.me link with encoded text message for the vehicle log
+ * Generates direct WhatsApp send link with encoded text message for the vehicle log
  */
 export function buildVehicleWhatsAppUrl(
   data: VehicleNotificationData,
@@ -125,4 +126,12 @@ export function buildVehicleWhatsAppUrl(
 ): string {
   const message = formatVehicleWhatsAppMessage(data);
   return buildWhatsAppLink(targetPhone, message);
+}
+
+/**
+ * Copies formatted vehicle message directly to device clipboard
+ */
+export async function copyVehicleTextToClipboard(data: VehicleNotificationData): Promise<boolean> {
+  const message = formatVehicleWhatsAppMessage(data);
+  return copySummaryToClipboard(message);
 }

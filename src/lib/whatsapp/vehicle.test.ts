@@ -62,13 +62,13 @@ describe('Vehicle WhatsApp Dispatch to 0660179070', () => {
     assert.ok(text.includes('Petrus Ndlovu'));
   });
 
-  it('generates a direct wa.me link with 27660179070', () => {
+  it('generates a direct WhatsApp URL with 27660179070', () => {
     const url = buildVehicleWhatsAppUrl({
       direction: 'in',
       licensePlate: 'ABC 123 GP'
     });
 
-    assert.ok(url.startsWith('https://wa.me/27660179070?text='));
+    assert.ok(url.startsWith('https://api.whatsapp.com/send?phone=27660179070&text='));
     assert.ok(url.includes(encodeURIComponent('ABC 123 GP')));
     assert.ok(url.includes(encodeURIComponent('ENTRY [ IN ] 🟢')));
   });

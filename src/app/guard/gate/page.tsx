@@ -10,7 +10,8 @@ import {
   Check, 
   FileText,
   LogOut,
-  MessageSquareShare
+  MessageSquareShare,
+  Copy
 } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n/context';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,8 @@ import { formatDuration } from '@/features/shifts/shiftCalculator';
 import { useAuth } from '@/context/AuthContext';
 import { 
   buildVehicleWhatsAppUrl, 
+  formatVehicleWhatsAppMessage,
+  copyVehicleTextToClipboard,
   GATE_DISPATCH_WHATSAPP_NUMBER, 
   VehicleNotificationData 
 } from '@/lib/whatsapp/vehicle';
@@ -60,6 +63,7 @@ export default function GuardGatePage() {
     url: string;
     plate: string;
     direction: 'in' | 'out';
+    message: string;
   } | null>(null);
 
   // Dynamic Session & Tactical IDs (never hardcoded)
@@ -188,7 +192,8 @@ export default function GuardGatePage() {
     };
 
     const waUrl = buildVehicleWhatsAppUrl(exitNotification);
-    setLastDispatchedWhatsApp({ url: waUrl, plate: entry.licensePlate, direction: 'out' });
+    const waMsg = formatVehicleWhatsAppMessage(exitNotification);
+    setLastDispatchedWhatsApp({ url: waUrl, plate: entry.licensePlate, direction: 'out', message: waMsg });
 
     try {
       window.open(waUrl, '_blank');
@@ -299,7 +304,8 @@ export default function GuardGatePage() {
     };
 
     const waUrl = buildVehicleWhatsAppUrl(vehicleNotification);
-    setLastDispatchedWhatsApp({ url: waUrl, plate: cleanPlate, direction });
+    const waMsg = formatVehicleWhatsAppMessage(vehicleNotification);
+    setLastDispatchedWhatsApp({ url: waUrl, plate: cleanPlate, direction, message: waMsg });
 
     try {
       window.open(waUrl, '_blank');
@@ -376,14 +382,29 @@ export default function GuardGatePage() {
               </span>
             </div>
           </div>
-          <a
-            href={lastDispatchedWhatsApp.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-3 py-2 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-black font-bold text-xs flex items-center gap-1.5 shadow-md shrink-0 active:scale-95 transition-transform"
-          >
-            <span>Open WhatsApp</span>
-          </a>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={async () => {
+                if (lastDispatchedWhatsApp?.message) {
+                  await navigator.clipboard.writeText(lastDispatchedWhatsApp.message);
+                  showToast('✓ Message with emojis copied to clipboard!');
+                }
+              }}
+              className="p-2 rounded-xl bg-[#212C38] border border-[#324050] text-[#E9E4D8] hover:text-[#F0A53A] font-bold text-xs flex items-center gap-1"
+              title="Copy message text with emojis"
+            >
+              <Copy className="w-4 h-4 text-[#F0A53A]" />
+              <span className="hidden sm:inline text-[11px]">Copy</span>
+            </button>
+            <a
+              href={lastDispatchedWhatsApp.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-2 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-black font-bold text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition-transform"
+            >
+              <span>Open WhatsApp</span>
+            </a>
+          </div>
         </div>
       )}
 
