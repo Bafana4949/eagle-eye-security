@@ -212,7 +212,7 @@ export function SosPanicModal({
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-slate-500">Dispatch:</span>
-                    <span className="font-bold text-blue-400 flex items-center gap-1">
+                    <span className="font-bold text-[#F0A53A] flex items-center gap-1">
                       <Radio className="w-3.5 h-3.5 animate-pulse" />
                       <span>SUPERVISOR NOTIFIED</span>
                     </span>
@@ -222,7 +222,7 @@ export function SosPanicModal({
                 <div className="w-full flex flex-col gap-2.5">
                   <a
                     href={`tel:${supervisorPhone}`}
-                    className="w-full py-4 px-6 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-2xl flex items-center justify-center gap-2 shadow-lg"
+                    className="w-full py-4 px-6 bg-[#F0A53A] hover:bg-[#FFC76A] text-[#2A1A04] font-bold text-sm rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-[#F0A53A]/20 border border-[#F0A53A]"
                   >
                     <PhoneCall className="w-5 h-5" />
                     <span>Call Supervisor Directly</span>

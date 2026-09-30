@@ -144,7 +144,9 @@ export const translations = {
     roundOverdueAlarm: 'Round is late. No scan in {0}. Start your round now.',
     whatsappShiftSummary: 'Send Shift Summary to WhatsApp',
     copySummary: 'Copy Summary',
-    summaryCopied: 'Summary copied to clipboard'
+    summaryCopied: 'Summary copied to clipboard',
+    logOut: 'Log Out',
+    selectLanguage: 'Select Language'
   },
 
   af: {
@@ -290,7 +292,9 @@ export const translations = {
     roundOverdueAlarm: 'Rondte is laat. Geen skandering in {0} nie. Begin nou jou rondte.',
     whatsappShiftSummary: 'Stuur Skofopsomming op WhatsApp',
     copySummary: 'Kopieer Opsomming',
-    summaryCopied: 'Opsomming gekopieer na knipbord'
+    summaryCopied: 'Opsomming gekopieer na knipbord',
+    logOut: 'Teken Uit',
+    selectLanguage: 'Kies Taal'
   },
 
   zu: {
@@ -436,6 +440,8 @@ export const translations = {
     roundOverdueAlarm: 'Umjikelezo uphuzile. Akukho okuskeniwe ku-{0}. Qala umjikelezo wakho manje.',
     whatsappShiftSummary: 'Thumela Isifinyezo Seshifu ku-WhatsApp',
     copySummary: 'Kopisha Isifinyezo',
-    summaryCopied: 'Isifinyezo sikopishelwe ebhodini lokunamathisela'
+    summaryCopied: 'Isifinyezo sikopishelwe ebhodini lokunamathisela',
+    logOut: 'Phuma',
+    selectLanguage: 'Khetha Ulimi'
   }
 };

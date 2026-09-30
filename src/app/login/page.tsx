@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { Eye, EyeOff, ArrowRight, AlertCircle, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, ArrowRight, AlertCircle, Loader2, Globe, Check } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { I18nProvider } from '@/lib/i18n/context';
@@ -16,6 +16,9 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [showLanguageModal, setShowLanguageModal] = useState(false);
+  const [pendingDestination, setPendingDestination] = useState('/guard');
+  const [selectedLang, setSelectedLang] = useState<'en' | 'af' | 'zu'>('en');
 
   const supabase = createClient();
 
@@ -57,31 +60,47 @@ export default function LoginPage() {
 
       const roles = (rolesData || []).map((r) => r.role);
 
+      let targetPath = '/guard';
       // 3. Automatic intelligent portal routing based on assigned role
       if (roles.includes('admin') || roles.includes('super_admin')) {
-        router.push('/admin');
+        targetPath = '/admin';
       } else if (roles.includes('supervisor')) {
-        router.push('/supervisor');
+        targetPath = '/supervisor';
       } else if (roles.includes('guard')) {
-        router.push('/guard');
+        targetPath = '/guard';
       } else if (roles.includes('client_viewer')) {
-        router.push('/viewer');
+        targetPath = '/viewer';
       } else {
         // Fallback if role record not yet populated in user_roles table
         if (cleanEmail.includes('admin')) {
-          router.push('/admin');
+          targetPath = '/admin';
         } else if (cleanEmail.includes('supervisor')) {
-          router.push('/supervisor');
+          targetPath = '/supervisor';
         } else if (cleanEmail.includes('viewer')) {
-          router.push('/viewer');
+          targetPath = '/viewer';
         } else {
-          router.push('/guard');
+          targetPath = '/guard';
         }
       }
+
+      setPendingDestination(targetPath);
+      setIsLoading(false);
+      setShowLanguageModal(true);
     } catch (err: unknown) {
       setIsLoading(false);
       setErrorMsg(err instanceof Error ? err.message : 'An unexpected network error occurred.');
     }
+  };
+
+  const handleConfirmLanguage = (chosenLang: 'en' | 'af' | 'zu') => {
+    setSelectedLang(chosenLang);
+    try {
+      localStorage.setItem('eagle_eye_lang_v1', chosenLang);
+      document.documentElement.lang = chosenLang;
+    } catch (e) {
+      console.error('Failed to set language in storage', e);
+    }
+    router.push(pendingDestination);
   };
 
   return (
@@ -185,6 +204,94 @@ export default function LoginPage() {
             Eagle Eye Security Operations &copy; 2026. All rights reserved.
           </p>
         </div>
+
+        {/* Post-Login Language Prompt Modal */}
+        {showLanguageModal && (
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="w-full max-w-md bg-[#212C38] border-2 border-[#F0A53A] rounded-3xl p-6 shadow-2xl text-[#E9E4D8] space-y-5 animate-in fade-in zoom-in-95 duration-200">
+              <div className="text-center space-y-2">
+                <div className="w-12 h-12 mx-auto rounded-2xl bg-[#18212B] border border-[#F0A53A]/60 flex items-center justify-center text-[#F0A53A] shadow-md shadow-[#F0A53A]/10">
+                  <Globe className="w-6 h-6 text-[#F0A53A]" />
+                </div>
+                <h3 className="text-xl font-bold tracking-tight text-[#E9E4D8]">
+                  Select Interface Language
+                </h3>
+                <p className="text-xs text-[#9AA5B1] font-medium leading-relaxed">
+                  Choose your display language. English is selected by default.
+                </p>
+              </div>
+
+              {/* Language Options */}
+              <div className="space-y-2.5">
+                {[
+                  {
+                    code: 'en' as const,
+                    name: 'English (Default)',
+                    native: 'Standard operations & reports',
+                    flag: '🇬🇧'
+                  },
+                  {
+                    code: 'af' as const,
+                    name: 'Afrikaans',
+                    native: 'Plaasbeveiliging & patrollieverslae',
+                    flag: '🇿🇦'
+                  },
+                  {
+                    code: 'zu' as const,
+                    name: 'isiZulu',
+                    native: 'Uhlelo lwezokuphepha ngesiZulu',
+                    flag: '🇿🇦'
+                  }
+                ].map((item) => {
+                  const isSelected = selectedLang === item.code;
+                  return (
+                    <button
+                      key={item.code}
+                      type="button"
+                      onClick={() => setSelectedLang(item.code)}
+                      className={`w-full p-3.5 rounded-2xl border text-left flex items-center justify-between transition-all duration-150 ${
+                        isSelected
+                          ? 'bg-[#18212B] border-[#F0A53A] ring-1 ring-[#F0A53A] shadow-lg'
+                          : 'bg-[#18212B]/70 border-[#324050] text-[#9AA5B1] hover:border-[#F0A53A]/50 hover:text-[#E9E4D8]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">{item.flag}</span>
+                        <div>
+                          <div
+                            className={`text-sm font-bold ${
+                              isSelected ? 'text-[#F0A53A]' : 'text-[#E9E4D8]'
+                            }`}
+                          >
+                            {item.name}
+                          </div>
+                          <div className="text-[11px] text-[#9AA5B1]">{item.native}</div>
+                        </div>
+                      </div>
+                      {isSelected ? (
+                        <div className="w-6 h-6 rounded-full bg-[#F0A53A] flex items-center justify-center text-[#2A1A04]">
+                          <Check className="w-3.5 h-3.5 stroke-[3]" />
+                        </div>
+                      ) : (
+                        <div className="w-5 h-5 rounded-full border border-[#324050]" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Continue Button */}
+              <button
+                type="button"
+                onClick={() => handleConfirmLanguage(selectedLang)}
+                className="w-full py-3.5 px-4 rounded-xl bg-radial from-[#FFC76A] via-[#F0A53A] to-[#C9801C] text-[#2A1A04] font-bold text-sm tracking-wide shadow-lg shadow-[#F0A53A]/25 border border-[#F0A53A] hover:brightness-105 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+              >
+                <span>Continue to Portal</span>
+                <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </I18nProvider>
   );

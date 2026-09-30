@@ -49,7 +49,7 @@ export default function GuardHistoryPage() {
         <button
           onClick={() => setActiveTab('scans')}
           className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-            activeTab === 'scans' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400'
+            activeTab === 'scans' ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold' : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
           }`}
         >
           <MapPin className="w-4 h-4" />
@@ -59,7 +59,7 @@ export default function GuardHistoryPage() {
         <button
           onClick={() => setActiveTab('shifts')}
           className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-            activeTab === 'shifts' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400'
+            activeTab === 'shifts' ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold' : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
           }`}
         >
           <Clock className="w-4 h-4" />

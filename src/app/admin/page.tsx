@@ -446,7 +446,7 @@ export default function AdminPortalPage() {
                       value={newCpName}
                       onChange={(e) => setNewCpName(e.target.value)}
                       placeholder="e.g. Pump Station East / Diesel Reservoir"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-4 py-2.5 text-sm text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
                     />
                   </div>
 
@@ -457,7 +457,7 @@ export default function AdminPortalPage() {
                     <select
                       value={newCpRadius}
                       onChange={(e) => setNewCpRadius(Number(e.target.value))}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-4 py-2.5 text-sm text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
                     >
                       <option value={30}>30 m (High precision)</option>
                       <option value={50}>50 m (Standard)</option>
@@ -480,7 +480,7 @@ export default function AdminPortalPage() {
                 <CardHeader className="flex items-center justify-between">
                   <CardTitle>Configured Checkpoints ({checkpoints.length})</CardTitle>
                   <Button onClick={handlePrintCards} variant="secondary" size="sm" className="gap-2">
-                    <Printer className="w-4 h-4 text-blue-400" />
+                    <Printer className="w-4 h-4 text-[#F0A53A]" />
                     <span>Print All Checkpoint Cards</span>
                   </Button>
                 </CardHeader>
@@ -504,15 +504,15 @@ export default function AdminPortalPage() {
 
                           <div>
                             <h4 className="font-bold text-sm text-white">{cp.name}</h4>
-                            <p className="text-xs font-mono text-blue-400 font-semibold mt-0.5">
+                            <p className="text-xs font-mono text-[#F0A53A] font-semibold mt-0.5">
                               {cp.qrCodeHash}
                             </p>
                             <p className="text-[11px] text-slate-400 mt-1">
                               Radius: {cp.permittedRadiusMeters}m · Order: #{idx + 1}
                             </p>
                             <div className="mt-1 text-[11px] font-mono flex items-center gap-1.5">
-                              <Radio className="w-3.5 h-3.5 text-purple-400" />
-                              <span className={cp.nfcUid ? 'text-purple-300' : 'text-slate-500'}>
+                              <Radio className="w-3.5 h-3.5 text-[#F0A53A]" />
+                              <span className={cp.nfcUid ? 'text-[#F0A53A]' : 'text-slate-500'}>
                                 {cp.nfcUid ? `NFC: ${cp.nfcUid}` : 'No NFC tag linked'}
                               </span>
                             </div>
@@ -669,7 +669,7 @@ export default function AdminPortalPage() {
                   </div>
 
                   <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-                    <span className="text-xs font-bold text-blue-400 block mb-2">🌙 Night Shift Hours</span>
+                    <span className="text-xs font-bold text-[#F0A53A] block mb-2">🌙 Night Shift Hours</span>
                     <div className="flex gap-3">
                       <div className="flex-1">
                         <label className="text-[11px] text-slate-400 block mb-1">Starts</label>

@@ -43,7 +43,7 @@ export default function RootLayout({
 }) {
   return (
     <html
-      lang="af"
+      lang="en"
       className={`${barlow.variable} ${barlowCondensed.variable} h-full antialiased bg-[#18212B] text-[#E9E4D8]`}
     >
       <body className="min-h-full flex flex-col bg-[#18212B] text-[#E9E4D8]">

@@ -251,7 +251,7 @@ export default function GuardPatrolPage() {
     <div className="space-y-4 max-w-lg mx-auto pb-6">
       {/* Toast Alert */}
       {toastMessage && (
-        <div className="fixed top-16 left-4 right-4 z-50 p-3 bg-blue-600 text-white font-bold text-xs rounded-xl shadow-2xl text-center animate-in slide-in-from-top-4 duration-200">
+        <div className="fixed top-16 left-4 right-4 z-50 p-3.5 bg-[#212C38] border border-[#F0A53A] text-[#F0A53A] font-bold text-xs rounded-2xl shadow-2xl text-center animate-in slide-in-from-top-4 duration-200">
           {toastMessage}
         </div>
       )}

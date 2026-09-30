@@ -335,7 +335,7 @@ export default function DeviceHardwareTestPage() {
             {/* Camera */}
             <div className="py-3 flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-blue-400">
+                <div className="p-2 rounded-xl bg-slate-800 text-[#F0A53A]">
                   <Camera className="w-5 h-5" />
                 </div>
                 <div>
@@ -363,7 +363,7 @@ export default function DeviceHardwareTestPage() {
             {/* Web NFC */}
             <div className="py-3 flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-purple-400">
+                <div className="p-2 rounded-xl bg-slate-800 text-[#F0A53A]">
                   <Radio className="w-5 h-5" />
                 </div>
                 <div>
@@ -391,7 +391,7 @@ export default function DeviceHardwareTestPage() {
             {/* IndexedDB */}
             <div className="py-3 flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-cyan-400">
+                <div className="p-2 rounded-xl bg-slate-800 text-[#F0A53A]">
                   <Database className="w-5 h-5" />
                 </div>
                 <div>
@@ -405,7 +405,7 @@ export default function DeviceHardwareTestPage() {
             {/* Service Worker */}
             <div className="py-3 flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-indigo-400">
+                <div className="p-2 rounded-xl bg-slate-800 text-[#F0A53A]">
                   <RefreshCw className="w-5 h-5" />
                 </div>
                 <div>
@@ -452,7 +452,7 @@ export default function DeviceHardwareTestPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
-                <Radio className="w-5 h-5 text-purple-400" />
+                <Radio className="w-5 h-5 text-[#F0A53A]" />
                 <span>Interactive Physical Tag Test</span>
               </CardTitle>
             </CardHeader>
@@ -532,7 +532,7 @@ export default function DeviceHardwareTestPage() {
 
         {/* Hardware Compatibility Guide Notice */}
         <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-start gap-3">
-          <Info className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
+          <Info className="w-5 h-5 text-[#F0A53A] flex-shrink-0 mt-0.5" />
           <div className="text-xs text-slate-300 space-y-1">
             <div className="font-bold text-white">Technician & Customer Hardware Notice</div>
             <p>

@@ -26,7 +26,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
         // Storage unavailable
       }
     }
-    return 'af'; // Default to Afrikaans as per Dawie Boerdery operations
+    return 'en'; // Default language is English as requested
   });
 
   const setLanguage = (lang: SupportedLanguage) => {
@@ -42,7 +42,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   };
 
   const t = (key: TranslationKey, ...args: (string | number)[]): string => {
-    const langDict = translations[language] || translations.af;
+    const langDict = translations[language] || translations.en;
     let template: string = langDict[key] || translations.en[key] || (key as string);
 
     if (args.length > 0) {

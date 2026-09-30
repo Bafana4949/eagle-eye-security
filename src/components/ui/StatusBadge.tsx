@@ -33,9 +33,9 @@ export function StatusBadge({ status, label, className = '' }: StatusBadgeProps)
     },
     syncing: {
       text: 'SYNCING',
-      bg: 'bg-blue-950/60 border-blue-700/60',
-      textCol: 'text-blue-300',
-      dot: 'bg-blue-400 animate-ping'
+      bg: 'bg-[#212C38] border-[#F0A53A]/60',
+      textCol: 'text-[#F0A53A]',
+      dot: 'bg-[#F0A53A] animate-ping'
     },
     verified: {
       text: 'VERIFIED',
@@ -63,9 +63,9 @@ export function StatusBadge({ status, label, className = '' }: StatusBadgeProps)
     },
     active: {
       text: 'ACTIVE',
-      bg: 'bg-blue-950/60 border-blue-700/60',
-      textCol: 'text-blue-300',
-      dot: 'bg-blue-400'
+      bg: 'bg-[#212C38] border-[#76C08F]/60',
+      textCol: 'text-[#76C08F]',
+      dot: 'bg-[#76C08F]'
     },
     completed: {
       text: 'COMPLETED',

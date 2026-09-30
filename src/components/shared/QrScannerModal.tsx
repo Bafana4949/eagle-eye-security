@@ -161,7 +161,7 @@ export function QrScannerModal({
       <div className="flex-1 flex flex-col items-center justify-center relative my-4">
         <div
           id={READER_ELEMENT_ID}
-          className="w-full max-w-sm rounded-2xl overflow-hidden border-2 border-blue-500 shadow-2xl relative bg-black aspect-square"
+          className="w-full max-w-sm rounded-2xl overflow-hidden border-2 border-[#F0A53A] shadow-2xl relative bg-black aspect-square"
         />
 
         {errorMsg && (
@@ -196,7 +196,7 @@ export function QrScannerModal({
           onClick={() => fileInputRef.current?.click()}
           className="flex items-center gap-2 px-5 py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold border border-slate-700 text-sm"
         >
-          <Upload className="w-5 h-5 text-blue-400" />
+          <Upload className="w-5 h-5 text-[#F0A53A]" />
           <span>{t('photoInstead') || 'Upload Photo'}</span>
         </button>
 

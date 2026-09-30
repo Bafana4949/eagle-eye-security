@@ -155,39 +155,39 @@ export default function GuardIncidentPage() {
 
   return (
     <div className="space-y-4 max-w-lg mx-auto pb-6">
-      {/* Toast Alert */}
+      {/* Toast Alert in Dawie Palette */}
       {toastMessage && (
-        <div className="fixed top-16 left-4 right-4 z-50 p-3.5 bg-blue-600 text-white font-bold text-xs rounded-xl shadow-2xl text-center animate-in slide-in-from-top-4 duration-200">
+        <div className="fixed top-16 left-4 right-4 z-50 p-3.5 bg-[#212C38] border border-[#F0A53A] text-[#F0A53A] font-bold text-xs rounded-2xl shadow-2xl text-center animate-in slide-in-from-top-4 duration-200">
           {toastMessage}
         </div>
       )}
 
       {/* Confirmation Screen after Submission */}
       {submittedInfo ? (
-        <Card className="p-6 text-center border-emerald-500/80 bg-slate-900/90 rounded-3xl animate-in zoom-in-95 duration-150">
-          <div className="w-16 h-16 rounded-full bg-emerald-950/90 border-2 border-emerald-400 flex items-center justify-center mx-auto mb-4 text-emerald-400">
+        <Card className="p-6 text-center border-[#76C08F] bg-[#212C38] rounded-3xl animate-in zoom-in-95 duration-150">
+          <div className="w-16 h-16 rounded-full bg-[#76C08F]/20 border-2 border-[#76C08F] flex items-center justify-center mx-auto mb-4 text-[#76C08F]">
             <CheckCircle2 className="w-10 h-10" />
           </div>
 
-          <span className="text-[11px] font-extrabold uppercase tracking-widest text-emerald-400 block mb-1">
+          <span className="text-[11px] font-extrabold uppercase tracking-widest text-[#76C08F] block mb-1">
             INCIDENT REPORTED
           </span>
-          <h2 className="text-xl font-black text-white tracking-tight mb-2">
+          <h2 className="text-xl font-black text-[#E9E4D8] tracking-tight mb-2">
             Reference: {submittedInfo.reference}
           </h2>
 
-          <div className="bg-slate-950/80 rounded-2xl p-4 border border-slate-800 text-xs font-mono text-slate-300 space-y-1.5 my-4">
+          <div className="bg-[#18212B] rounded-2xl p-4 border border-[#324050] text-xs font-mono text-[#E9E4D8] space-y-1.5 my-4">
             <div className="flex justify-between">
-              <span className="text-slate-500">Report Time:</span>
-              <span className="font-bold text-white">{submittedInfo.timestamp}</span>
+              <span className="text-[#9AA5B1]">Report Time:</span>
+              <span className="font-bold text-[#E9E4D8]">{submittedInfo.timestamp}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500">Classification:</span>
-              <span className="font-bold text-amber-400">{submittedInfo.type}</span>
+              <span className="text-[#9AA5B1]">Classification:</span>
+              <span className="font-bold text-[#F0A53A]">{submittedInfo.type}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500">Cloud Sync:</span>
-              <span className={`font-bold ${submittedInfo.isOnline ? 'text-emerald-400' : 'text-amber-400'}`}>
+              <span className="text-[#9AA5B1]">Cloud Sync:</span>
+              <span className={`font-bold ${submittedInfo.isOnline ? 'text-[#76C08F]' : 'text-[#F0A53A]'}`}>
                 {submittedInfo.isOnline ? 'Uploaded to Server' : 'Queued (Waiting for connection)'}
               </span>
             </div>
@@ -197,7 +197,7 @@ export default function GuardIncidentPage() {
             onClick={() => setSubmittedInfo(null)}
             variant="primary"
             size="touch"
-            className="w-full bg-blue-600 hover:bg-blue-500 font-bold"
+            className="w-full font-bold shadow-lg shadow-[#F0A53A]/20"
           >
             <span>Report Another Incident</span>
             <ArrowRight className="w-5 h-5 ml-1" />
@@ -205,11 +205,11 @@ export default function GuardIncidentPage() {
         </Card>
       ) : (
         /* Incident Creation Form */
-        <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
+        <Card className="rounded-3xl border-[#324050] bg-[#212C38] p-4">
           <CardHeader className="mb-2">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-amber-400" />
-              <CardTitle>Report Security Incident</CardTitle>
+              <AlertTriangle className="w-5 h-5 text-[#F0A53A]" />
+              <CardTitle className="text-[#E9E4D8]">Report Security Incident</CardTitle>
             </div>
             <Badge variant="warning">{t('incidentType')}</Badge>
           </CardHeader>
@@ -226,11 +226,11 @@ export default function GuardIncidentPage() {
                   onClick={() => setSelectedType(cat.id)}
                   className={`p-3.5 rounded-2xl border text-left flex items-center gap-2.5 transition-all select-none active:scale-[0.98] ${
                     isSelected
-                      ? 'bg-amber-950/70 border-amber-400 text-amber-200 font-bold shadow-lg shadow-amber-950/40'
-                      : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                      ? 'bg-[#F0A53A]/15 border-[#F0A53A] text-[#F0A53A] font-bold shadow-lg shadow-[#F0A53A]/10'
+                      : 'bg-[#18212B] border-[#324050] text-[#9AA5B1] hover:border-[#F0A53A]/50 hover:text-[#E9E4D8]'
                   }`}
                 >
-                  <Icon className={`w-5 h-5 flex-shrink-0 ${isSelected ? 'text-amber-400' : 'text-slate-500'}`} />
+                  <Icon className={`w-5 h-5 flex-shrink-0 ${isSelected ? 'text-[#F0A53A]' : 'text-[#9AA5B1]'}`} />
                   <span className="text-xs leading-tight">{cat.label}</span>
                 </button>
               );
@@ -238,18 +238,18 @@ export default function GuardIncidentPage() {
           </div>
 
           {/* Severity Selector (Step 2) */}
-          <div className="mt-4 pt-3 border-t border-slate-800">
-            <label className="text-xs font-bold text-slate-400 block mb-2">
+          <div className="mt-4 pt-3 border-t border-[#324050]">
+            <label className="text-xs font-bold text-[#9AA5B1] block mb-2">
               Incident Severity
             </label>
             <div className="grid grid-cols-4 gap-2">
               {(['low', 'medium', 'high', 'critical'] as IncidentSeverity[]).map((level) => {
                 const isSelected = severity === level;
                 const colors = {
-                  low: isSelected ? 'bg-blue-600 text-white' : 'bg-slate-950 border border-slate-800 text-slate-400',
-                  medium: isSelected ? 'bg-amber-600 text-white' : 'bg-slate-950 border border-slate-800 text-slate-400',
-                  high: isSelected ? 'bg-orange-600 text-white' : 'bg-slate-950 border border-slate-800 text-slate-400',
-                  critical: isSelected ? 'bg-rose-600 text-white' : 'bg-slate-950 border border-slate-800 text-slate-400'
+                  low: isSelected ? 'bg-[#76C08F] text-[#18212B] font-bold' : 'bg-[#18212B] border border-[#324050] text-[#9AA5B1]',
+                  medium: isSelected ? 'bg-[#F0A53A] text-[#2A1A04] font-bold' : 'bg-[#18212B] border border-[#324050] text-[#9AA5B1]',
+                  high: isSelected ? 'bg-[#C9801C] text-white font-bold' : 'bg-[#18212B] border border-[#324050] text-[#9AA5B1]',
+                  critical: isSelected ? 'bg-[#B3261E] text-white font-bold' : 'bg-[#18212B] border border-[#324050] text-[#9AA5B1]'
                 };
 
                 return (
@@ -267,7 +267,7 @@ export default function GuardIncidentPage() {
 
           {/* Description Field (Step 3) */}
           <div className="mt-4">
-            <label className="text-xs font-bold text-slate-400 block mb-1">
+            <label className="text-xs font-bold text-[#9AA5B1] block mb-1">
               Incident Description / Location Details
             </label>
             <textarea
@@ -276,24 +276,24 @@ export default function GuardIncidentPage() {
               rows={3}
               maxLength={300}
               placeholder="e.g. South boundary fence wire cut near river bed. Footprints heading towards main road."
-              className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-[#18212B] border border-[#324050] rounded-xl p-3 text-xs text-[#E9E4D8] placeholder-[#9AA5B1]/50 focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
             />
           </div>
 
           {/* Evidence Photo (Step 4) */}
           <div className="mt-3">
             {photoUrl ? (
-              <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-slate-950 border border-slate-800">
+              <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-[#18212B] border border-[#324050]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={photoUrl} alt="Evidence preview" className="w-12 h-12 object-cover rounded-xl" />
                 <div className="flex-1">
-                  <span className="text-xs font-bold text-emerald-400 block">Photograph Attached</span>
+                  <span className="text-xs font-bold text-[#76C08F] block">Photograph Attached</span>
                   <button
                     onClick={() => {
                       setPhotoUrl(null);
                       setPhotoBlob(null);
                     }}
-                    className="text-[11px] text-rose-400 hover:underline"
+                    className="text-[11px] text-[#E0685C] hover:underline"
                   >
                     Remove
                   </button>
@@ -302,32 +302,30 @@ export default function GuardIncidentPage() {
             ) : (
               <button
                 onClick={() => setShowPhotoModal(true)}
-                className="w-full py-3.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold flex items-center justify-center gap-2"
+                className="w-full py-3.5 px-4 rounded-xl bg-[#212C38] hover:bg-[#283644] border border-[#324050] text-[#E9E4D8] text-xs font-bold flex items-center justify-center gap-2"
               >
-                <Camera className="w-5 h-5 text-blue-400" />
+                <Camera className="w-5 h-5 text-[#F0A53A]" />
                 <span>Take Evidence Photo</span>
               </button>
             )}
           </div>
 
           {/* GPS Auto-tag note (Step 5) */}
-          <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-400 px-1">
-            <Navigation className="w-3.5 h-3.5 text-emerald-400" />
+          <div className="mt-3 flex items-center gap-2 text-[11px] text-[#9AA5B1] px-1">
+            <Navigation className="w-3.5 h-3.5 text-[#76C08F]" />
             <span>GPS location will be automatically tagged upon submission</span>
           </div>
 
           {/* Submit Action (Step 6) */}
           <div className="pt-4">
-            <Button
+            <button
               onClick={() => void handleSubmit()}
-              variant="primary"
-              size="touch"
-              isLoading={isSubmitting}
-              className="w-full gap-2 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 font-bold shadow-xl shadow-amber-950/60"
+              disabled={isSubmitting}
+              className="w-full py-4 px-5 rounded-2xl bg-radial from-[#FFC76A] via-[#F0A53A] to-[#C9801C] hover:brightness-105 active:scale-[0.98] text-[#2A1A04] font-bold text-base flex items-center justify-center gap-2 shadow-xl shadow-[#F0A53A]/20 border border-[#F0A53A] transition-all disabled:opacity-50"
             >
-              <Send className="w-5 h-5" />
-              <span>Submit Incident Report</span>
-            </Button>
+              <Send className="w-5 h-5 stroke-[2.5]" />
+              <span>{isSubmitting ? 'Dien in...' : 'Submit Incident Report'}</span>
+            </button>
           </div>
         </Card>
       )}

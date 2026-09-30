@@ -256,24 +256,24 @@ export default function GuardGatePage() {
 
   return (
     <div className="space-y-4 max-w-lg mx-auto pb-6">
-      {/* Toast Alert */}
+      {/* Toast Alert in Dawie Palette */}
       {toastMessage && (
-        <div className="fixed top-16 left-4 right-4 z-50 p-3.5 bg-blue-600 text-white font-bold text-xs rounded-xl shadow-2xl text-center animate-in slide-in-from-top-4 duration-150">
+        <div className="fixed top-16 left-4 right-4 z-50 p-3.5 bg-[#212C38] border border-[#F0A53A] text-[#F0A53A] font-bold text-xs rounded-2xl shadow-2xl text-center animate-in slide-in-from-top-4 duration-150">
           {toastMessage}
         </div>
       )}
 
       {/* Direction Segment Switcher */}
-      <div className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-slate-900 border border-slate-800">
+      <div className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-[#212C38] border border-[#324050]">
         <button
           onClick={() => setDirection('in')}
           className={`py-3.5 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${
             direction === 'in'
-              ? 'bg-blue-600 text-white shadow-lg'
-              : 'text-slate-400 hover:text-slate-200'
+              ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold'
+              : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
           }`}
         >
-          <ArrowDownLeft className="w-5 h-5 text-blue-300" />
+          <ArrowDownLeft className="w-5 h-5 text-[#2A1A04]" />
           <span>{t('vehicleIn')}</span>
         </button>
 
@@ -281,21 +281,21 @@ export default function GuardGatePage() {
           onClick={() => setDirection('out')}
           className={`py-3.5 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${
             direction === 'out'
-              ? 'bg-emerald-600 text-white shadow-lg'
-              : 'text-slate-400 hover:text-slate-200'
+              ? 'bg-[#76C08F] text-[#18212B] shadow-md font-bold'
+              : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
           }`}
         >
-          <ArrowUpRight className="w-5 h-5 text-emerald-300" />
+          <ArrowUpRight className="w-5 h-5 text-[#18212B]" />
           <span>{t('vehicleOut')}</span>
         </button>
       </div>
 
       {/* Vehicles Currently On Premises (High Visibility Section) */}
-      <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
-        <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800/80">
+      <Card className="rounded-3xl border-[#324050] bg-[#212C38] p-4">
+        <div className="flex items-center justify-between mb-3 pb-2 border-b border-[#324050]">
           <div className="flex items-center gap-2">
-            <Car className="w-5 h-5 text-blue-400" />
-            <span className="text-sm font-bold text-white">Vehicles on Premises</span>
+            <Car className="w-5 h-5 text-[#F0A53A]" />
+            <span className="text-sm font-bold text-[#E9E4D8]">Vehicles on Premises</span>
           </div>
           <Badge variant={vehiclesOnSite.length > 0 ? 'warning' : 'neutral'}>
             {vehiclesOnSite.length} Inside
@@ -303,7 +303,7 @@ export default function GuardGatePage() {
         </div>
 
         {vehiclesOnSite.length === 0 ? (
-          <p className="text-xs text-slate-500 text-center py-4">No vehicles logged inside premises</p>
+          <p className="text-xs text-[#9AA5B1] text-center py-4">No vehicles logged inside premises</p>
         ) : (
           <div className="space-y-2.5 max-h-56 overflow-y-auto">
             {vehiclesOnSite.map((v) => {
@@ -312,14 +312,14 @@ export default function GuardGatePage() {
               return (
                 <div
                   key={v.id}
-                  className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between gap-2"
+                  className="p-3 rounded-2xl bg-[#18212B] border border-[#324050] flex items-center justify-between gap-2"
                 >
                   <div>
-                    <span className="font-mono font-black text-white text-base block">{v.licensePlate}</span>
-                    <span className="text-xs text-slate-400">
+                    <span className="font-mono font-black text-[#E9E4D8] text-base block">{v.licensePlate}</span>
+                    <span className="text-xs text-[#9AA5B1]">
                       {[v.makeModel, v.driverName].filter(Boolean).join(' · ')}
                     </span>
-                    <div className="flex items-center gap-1 text-[11px] text-amber-400 font-mono mt-0.5">
+                    <div className="flex items-center gap-1 text-[11px] text-[#F0A53A] font-mono mt-0.5">
                       <Clock className="w-3 h-3" />
                       <span>Dwell: {formatDuration(dwellMs)}</span>
                     </div>
@@ -327,7 +327,7 @@ export default function GuardGatePage() {
 
                   <button
                     onClick={() => void handleFastRecordExit(v)}
-                    className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition-transform"
+                    className="px-3.5 py-2 rounded-xl bg-[#76C08F] hover:bg-[#68B080] text-[#18212B] font-bold text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition-transform"
                   >
                     <LogOut className="w-4 h-4" />
                     <span>Record Exit</span>
@@ -339,21 +339,19 @@ export default function GuardGatePage() {
         )}
       </Card>
 
-      {/* Primary Scanner Action */}
-      <Button
+      {/* Primary Scanner Action in Dawie Amber Punch */}
+      <button
         onClick={() => setShowScannerModal(true)}
-        variant="primary"
-        size="touch"
-        className="w-full gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 font-bold shadow-xl shadow-blue-950/60"
+        className="w-full py-4 px-5 rounded-2xl bg-radial from-[#FFC76A] via-[#F0A53A] to-[#C9801C] hover:brightness-105 active:scale-[0.98] text-[#2A1A04] font-bold text-base flex items-center justify-center gap-2 shadow-xl shadow-[#F0A53A]/20 border border-[#F0A53A] transition-all"
       >
-        <Car className="w-6 h-6" />
+        <Car className="w-6 h-6 stroke-[2.5]" />
         <span>{t('scanDisc')}</span>
-      </Button>
+      </button>
 
       {/* Entry / Log Form */}
-      <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
+      <Card className="rounded-3xl border-[#324050] bg-[#212C38] p-4">
         <CardHeader className="mb-3">
-          <CardTitle className="text-sm font-bold text-white">
+          <CardTitle className="text-sm font-bold text-[#E9E4D8]">
             {direction === 'in' ? 'Log Vehicle Entry' : 'Log Vehicle Exit'}
           </CardTitle>
           {discData && (
@@ -366,7 +364,7 @@ export default function GuardGatePage() {
         <div className="space-y-3">
           {/* Plate Number */}
           <div>
-            <label className="text-xs font-bold text-slate-400 block mb-1">
+            <label className="text-xs font-bold text-[#9AA5B1] block mb-1">
               Vehicle Registration / Plate *
             </label>
             <input
@@ -374,14 +372,14 @@ export default function GuardGatePage() {
               value={plate}
               onChange={(e) => setPlate(e.target.value.toUpperCase())}
               placeholder="e.g. ABC 123 GP / MP"
-              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-lg font-mono font-bold text-white uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-4 py-3 text-lg font-mono font-bold text-[#E9E4D8] uppercase focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
             />
           </div>
 
           {/* Make & Model + Colour */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-semibold text-slate-400 block mb-1">
+              <label className="text-xs font-semibold text-[#9AA5B1] block mb-1">
                 Make & Model
               </label>
               <input
@@ -389,12 +387,12 @@ export default function GuardGatePage() {
                 value={makeModel}
                 onChange={(e) => setMakeModel(e.target.value)}
                 placeholder="Toyota Hilux"
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-3 py-2.5 text-xs text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
               />
             </div>
 
             <div>
-              <label className="text-xs font-semibold text-slate-400 block mb-1">
+              <label className="text-xs font-semibold text-[#9AA5B1] block mb-1">
                 Colour
               </label>
               <input
@@ -402,7 +400,7 @@ export default function GuardGatePage() {
                 value={vehicleColour}
                 onChange={(e) => setVehicleColour(e.target.value)}
                 placeholder="White"
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-3 py-2.5 text-xs text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
               />
             </div>
           </div>
@@ -410,7 +408,7 @@ export default function GuardGatePage() {
           {/* Driver & Company */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-semibold text-slate-400 block mb-1">
+              <label className="text-xs font-semibold text-[#9AA5B1] block mb-1">
                 Driver Name
               </label>
               <input
@@ -418,12 +416,12 @@ export default function GuardGatePage() {
                 value={driverName}
                 onChange={(e) => setDriverName(e.target.value)}
                 placeholder="Driver name"
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-3 py-2.5 text-xs text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
               />
             </div>
 
             <div>
-              <label className="text-xs font-semibold text-slate-400 block mb-1">
+              <label className="text-xs font-semibold text-[#9AA5B1] block mb-1">
                 Company / Reason
               </label>
               <input
@@ -431,7 +429,7 @@ export default function GuardGatePage() {
                 value={company}
                 onChange={(e) => setCompany(e.target.value)}
                 placeholder="Feed Delivery / Vet"
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-3 py-2.5 text-xs text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
               />
             </div>
           </div>
@@ -439,7 +437,7 @@ export default function GuardGatePage() {
           {/* Vehicle Photograph */}
           <div className="pt-1">
             {vehiclePhotoUrl ? (
-              <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-slate-950 border border-slate-800">
+              <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-[#18212B] border border-[#324050]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={vehiclePhotoUrl}
@@ -447,13 +445,13 @@ export default function GuardGatePage() {
                   className="w-12 h-12 object-cover rounded-xl"
                 />
                 <div className="flex-1">
-                  <span className="text-xs font-bold text-emerald-400 block">Photo attached</span>
+                  <span className="text-xs font-bold text-[#76C08F] block">Photo attached</span>
                   <button
                     onClick={() => {
                       setVehiclePhotoUrl(null);
                       setVehiclePhotoBlob(null);
                     }}
-                    className="text-[11px] text-rose-400 hover:underline"
+                    className="text-[11px] text-[#E0685C] hover:underline"
                   >
                     Remove
                   </button>
@@ -462,9 +460,9 @@ export default function GuardGatePage() {
             ) : (
               <button
                 onClick={() => setShowPhotoModal(true)}
-                className="w-full py-3.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold flex items-center justify-center gap-2"
+                className="w-full py-3.5 px-4 rounded-xl bg-[#212C38] hover:bg-[#283644] border border-[#324050] text-[#E9E4D8] text-xs font-bold flex items-center justify-center gap-2"
               >
-                <Camera className="w-5 h-5 text-blue-400" />
+                <Camera className="w-5 h-5 text-[#F0A53A]" />
                 <span>Take Vehicle Photo</span>
               </button>
             )}
@@ -474,9 +472,9 @@ export default function GuardGatePage() {
           <div className="pt-2">
             <Button
               onClick={() => void handleSaveEntry()}
-              variant={direction === 'in' ? 'primary' : 'secondary'}
+              variant="primary"
               size="touch"
-              className="w-full font-bold"
+              className="w-full font-bold shadow-lg shadow-[#F0A53A]/20"
             >
               <span>{direction === 'in' ? 'Save Vehicle Entry' : 'Save Vehicle Exit'}</span>
             </Button>
@@ -487,40 +485,40 @@ export default function GuardGatePage() {
       {/* Editable Scanned Disc Confirmation Modal */}
       {showDiscVerifyModal && discData && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-slate-900 border-2 border-blue-500 rounded-3xl max-w-sm w-full p-5 shadow-2xl">
+          <div className="bg-[#212C38] border-2 border-[#F0A53A] rounded-3xl max-w-sm w-full p-5 shadow-2xl">
             <div className="flex items-center gap-2 mb-3">
-              <FileText className="w-5 h-5 text-blue-400" />
-              <h3 className="text-base font-bold text-white">Confirm Scanned Disc Data</h3>
+              <FileText className="w-5 h-5 text-[#F0A53A]" />
+              <h3 className="text-base font-bold text-[#E9E4D8]">Confirm Scanned Disc Data</h3>
             </div>
 
-            <div className="space-y-2.5 text-xs text-slate-300">
+            <div className="space-y-2.5 text-xs text-[#9AA5B1]">
               <div>
-                <label className="text-[10px] uppercase font-bold text-slate-500 block">Registration</label>
+                <label className="text-[10px] uppercase font-bold text-[#9AA5B1] block">Registration</label>
                 <input
                   type="text"
                   value={plate}
                   onChange={(e) => setPlate(e.target.value.toUpperCase())}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 font-mono font-bold text-white uppercase"
+                  className="w-full bg-[#18212B] border border-[#324050] rounded-lg p-2 font-mono font-bold text-[#E9E4D8] uppercase focus:outline-none focus:border-[#F0A53A]"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] uppercase font-bold text-slate-500 block">Make & Model</label>
+                  <label className="text-[10px] uppercase font-bold text-[#9AA5B1] block">Make & Model</label>
                   <input
                     type="text"
                     value={makeModel}
                     onChange={(e) => setMakeModel(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white"
+                    className="w-full bg-[#18212B] border border-[#324050] rounded-lg p-2 text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A]"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase font-bold text-slate-500 block">Colour</label>
+                  <label className="text-[10px] uppercase font-bold text-[#9AA5B1] block">Colour</label>
                   <input
                     type="text"
                     value={vehicleColour}
                     onChange={(e) => setVehicleColour(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white"
+                    className="w-full bg-[#18212B] border border-[#324050] rounded-lg p-2 text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A]"
                   />
                 </div>
               </div>

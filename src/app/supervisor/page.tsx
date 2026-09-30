@@ -409,7 +409,7 @@ export default function SupervisorDashboardPage() {
               onClick={() => setActiveTab('overview')}
               className={`px-4 py-2 rounded-xl transition-all ${
                 activeTab === 'overview'
-                  ? 'bg-blue-600 text-white shadow-md'
+                  ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold'
                   : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -419,7 +419,7 @@ export default function SupervisorDashboardPage() {
               onClick={() => setActiveTab('patrols')}
               className={`px-4 py-2 rounded-xl transition-all ${
                 activeTab === 'patrols'
-                  ? 'bg-blue-600 text-white shadow-md'
+                  ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold'
                   : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -429,7 +429,7 @@ export default function SupervisorDashboardPage() {
               onClick={() => setActiveTab('incidents')}
               className={`px-4 py-2 rounded-xl transition-all ${
                 activeTab === 'incidents'
-                  ? 'bg-blue-600 text-white shadow-md'
+                  ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold'
                   : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -439,7 +439,7 @@ export default function SupervisorDashboardPage() {
               onClick={() => setActiveTab('gate')}
               className={`px-4 py-2 rounded-xl transition-all ${
                 activeTab === 'gate'
-                  ? 'bg-blue-600 text-white shadow-md'
+                  ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold'
                   : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -529,7 +529,7 @@ export default function SupervisorDashboardPage() {
                         {g.phone && (
                           <a
                             href={`tel:${g.phone}`}
-                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-400 hover:text-blue-300 pt-1"
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#F0A53A] hover:text-[#FFC76A] pt-1"
                           >
                             <PhoneCall className="w-3.5 h-3.5" />
                             <span>Call Guard ({g.phone})</span>

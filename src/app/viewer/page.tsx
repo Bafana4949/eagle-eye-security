@@ -231,7 +231,7 @@ export default function ClientViewerPortal() {
               onClick={() => setActiveTab('summary')}
               className={`px-4 py-2 rounded-xl transition-all ${
                 activeTab === 'summary'
-                  ? 'bg-indigo-600 text-white shadow-md'
+                  ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold'
                   : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -241,7 +241,7 @@ export default function ClientViewerPortal() {
               onClick={() => setActiveTab('patrols')}
               className={`px-4 py-2 rounded-xl transition-all ${
                 activeTab === 'patrols'
-                  ? 'bg-indigo-600 text-white shadow-md'
+                  ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold'
                   : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -251,7 +251,7 @@ export default function ClientViewerPortal() {
               onClick={() => setActiveTab('incidents')}
               className={`px-4 py-2 rounded-xl transition-all ${
                 activeTab === 'incidents'
-                  ? 'bg-indigo-600 text-white shadow-md'
+                  ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold'
                   : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -261,7 +261,7 @@ export default function ClientViewerPortal() {
               onClick={() => setActiveTab('vehicles')}
               className={`px-4 py-2 rounded-xl transition-all ${
                 activeTab === 'vehicles'
-                  ? 'bg-indigo-600 text-white shadow-md'
+                  ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold'
                   : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -291,7 +291,7 @@ export default function ClientViewerPortal() {
                   </div>
                   <div className="flex justify-between py-1.5">
                     <span className="text-slate-400">Data Guarantee</span>
-                    <span className="font-mono text-blue-400">Read-Only Live Audit</span>
+                    <span className="font-mono text-[#F0A53A] font-semibold">Read-Only Live Audit</span>
                   </div>
                 </div>
               </Card>

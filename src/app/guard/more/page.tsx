@@ -81,7 +81,7 @@ export default function GuardMorePage() {
       <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
         <CardHeader className="mb-2">
           <div className="flex items-center gap-2">
-            <Globe className="w-5 h-5 text-blue-400" />
+            <Globe className="w-5 h-5 text-[#F0A53A]" />
             <CardTitle className="text-sm">Language / Taal / Ulimi</CardTitle>
           </div>
           <Badge variant="info">{language.toUpperCase()}</Badge>
@@ -98,8 +98,8 @@ export default function GuardMorePage() {
               onClick={() => setLanguage(lang.code as SupportedLanguage)}
               className={`p-3 rounded-2xl border text-center transition-all ${
                 language === lang.code
-                  ? 'bg-blue-600 border-blue-400 text-white font-bold shadow-lg'
-                  : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                  ? 'bg-[#F0A53A] border-[#F0A53A] text-[#2A1A04] font-bold shadow-lg'
+                  : 'bg-[#18212B] border-[#324050] text-[#9AA5B1] hover:border-[#F0A53A]/50 hover:text-[#E9E4D8]'
               }`}
             >
               <span className="text-lg block mb-0.5">{lang.flag}</span>
@@ -170,7 +170,7 @@ export default function GuardMorePage() {
         <Link href="/supervisor">
           <div className="p-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-200 flex items-center justify-between">
             <span>Supervisor Command Portal</span>
-            <ExternalLink className="w-4 h-4 text-blue-400" />
+            <ExternalLink className="w-4 h-4 text-[#F0A53A]" />
           </div>
         </Link>
         <Link href="/admin">
