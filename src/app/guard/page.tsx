@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { 
   MapPin, 
   Clock, 
@@ -14,7 +15,8 @@ import {
   Wifi,
   WifiOff,
   LogOut,
-  ChevronRight
+  ChevronRight,
+  UserCheck
 } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n/context';
 import { Button } from '@/components/ui/button';
@@ -42,6 +44,15 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 
+interface ClockInDetails {
+  time: number;
+  isoTime: string;
+  latitude?: number;
+  longitude?: number;
+  accuracy?: number;
+  photoUrl?: string;
+}
+
 export default function GuardHomePage() {
   const { t } = useTranslation();
   const { user, profile, assignedSite } = useAuth();
@@ -49,6 +60,7 @@ export default function GuardHomePage() {
   // Shift & Operational State
   const [isOnShift, setIsOnShift] = useState(false);
   const [shiftStartTime, setShiftStartTime] = useState<number | null>(null);
+  const [clockInDetails, setClockInDetails] = useState<ClockInDetails | null>(null);
   const [dutyDuration, setDutyDuration] = useState<string>('00h 00m');
   const [showSelfieModal, setShowSelfieModal] = useState(false);
   const [selfieAction, setSelfieAction] = useState<'start' | 'end'>('start');
@@ -58,7 +70,7 @@ export default function GuardHomePage() {
   const [recentScans, setRecentScans] = useState<PatrolScan[]>([]);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [activeCheckpointsCompleted, setActiveCheckpointsCompleted] = useState<string[]>([]);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<{ text: string; type?: 'success' | 'amber' } | null>(null);
 
   // Sync state
   const [syncSummary, setSyncSummary] = useState<OfflineSyncSummary>({
@@ -121,7 +133,15 @@ export default function GuardHomePage() {
         const activeShift = await offlineDB.shifts.where('guardId').equals(guardId).first();
         if (activeShift && activeShift.status === 'active') {
           setIsOnShift(true);
-          setShiftStartTime(new Date(activeShift.actualStart || activeShift.scheduledStart).getTime());
+          const startMs = new Date(activeShift.actualStart || activeShift.scheduledStart).getTime();
+          setShiftStartTime(startMs);
+          setClockInDetails({
+            time: startMs,
+            isoTime: activeShift.actualStart || activeShift.scheduledStart,
+            latitude: activeShift.startLatitude,
+            longitude: activeShift.startLongitude,
+            photoUrl: activeShift.startSelfieUrl
+          });
         }
 
         // Sync checkpoints from Supabase if online
@@ -220,9 +240,9 @@ export default function GuardHomePage() {
     void loadData();
   }, [guardId, siteId]);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+  const showToast = (text: string, type: 'success' | 'amber' = 'success') => {
+    setToastMessage({ text, type });
+    setTimeout(() => setToastMessage(null), 4000);
   };
 
   // Clock In / Out Handlers
@@ -231,54 +251,142 @@ export default function GuardHomePage() {
     setShowSelfieModal(true);
   };
 
-  const handleSelfieCapture = useCallback(async (blob: Blob) => {
+  const handleSelfieCapture = useCallback(async (blob: Blob, dataUrl: string) => {
     setShowSelfieModal(false);
     const now = Date.now();
+    const nowIso = new Date(now).toISOString();
 
     if (selfieAction === 'start') {
+      let startLat: number | undefined;
+      let startLon: number | undefined;
+      let startAccuracy: number | undefined;
+
+      // 1. Fetch exact high-accuracy GPS coordinates immediately
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        try {
+          const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 7000
+            })
+          );
+          startLat = pos.coords.latitude;
+          startLon = pos.coords.longitude;
+          startAccuracy = Math.round(pos.coords.accuracy);
+        } catch (geoErr) {
+          console.warn('Geolocation capture during clock-in:', geoErr);
+        }
+      }
+
+      // 2. Set operational state immediately
       setIsOnShift(true);
       setShiftStartTime(now);
+      const clockInRecord: ClockInDetails = {
+        time: now,
+        isoTime: nowIso,
+        latitude: startLat,
+        longitude: startLon,
+        accuracy: startAccuracy,
+        photoUrl: dataUrl
+      };
+      setClockInDetails(clockInRecord);
       void requestScreenWakeLock();
 
-      if (offlineDB && syncEngine) {
-        const shiftId = crypto.randomUUID();
+      const shiftId = crypto.randomUUID();
+
+      // 3. Save to local IndexedDB
+      if (offlineDB) {
         await offlineDB.shifts.add({
           id: shiftId,
           siteId,
           guardId,
           guardName,
-          shiftType: shiftWindow.shiftType,
-          scheduledStart: new Date(shiftWindow.startTime).toISOString(),
-          scheduledEnd: new Date(shiftWindow.endTime).toISOString(),
-          actualStart: new Date(now).toISOString(),
+          shiftType: 'custom',
+          scheduledStart: nowIso,
+          scheduledEnd: new Date(now + 12 * 3600000).toISOString(),
+          actualStart: nowIso,
+          startLatitude: startLat,
+          startLongitude: startLon,
+          startSelfieUrl: dataUrl,
           status: 'active'
         });
+      }
 
+      // 4. Enqueue in SyncEngine
+      if (syncEngine) {
         await syncEngine.enqueue(
           'shift_start',
           guardId,
           siteId,
           {
             shiftId,
-            shiftType: shiftWindow.shiftType,
-            scheduledStart: new Date(shiftWindow.startTime).toISOString(),
-            scheduledEnd: new Date(shiftWindow.endTime).toISOString()
+            shiftType: 'custom',
+            scheduledStart: nowIso,
+            scheduledEnd: new Date(now + 12 * 3600000).toISOString(),
+            actualStart: nowIso,
+            startLatitude: startLat,
+            startLongitude: startLon,
+            startAccuracy
           },
-          [{ field: 'selfie', blob, fileName: 'selfie-start.jpg', mimeType: 'image/jpeg' }]
+          [{ field: 'selfie', blob, fileName: `selfie-start-${shiftId}.jpg`, mimeType: 'image/jpeg' }]
         );
       }
 
-      showToast(t('shiftStarted', formatTimeHM(now)));
+      // 5. Direct Supabase insert if online
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        try {
+          const supabase = createClient();
+          await supabase.from('shifts').insert({
+            id: shiftId,
+            site_id: siteId,
+            guard_id: guardId,
+            shift_type: 'custom',
+            scheduled_start: nowIso,
+            scheduled_end: new Date(now + 12 * 3600000).toISOString(),
+            actual_start: nowIso,
+            start_latitude: startLat,
+            start_longitude: startLon,
+            status: 'active'
+          });
+        } catch (dbErr) {
+          console.warn('Direct Supabase insert queued offline:', dbErr);
+        }
+      }
+
+      const gpsSnippet = startLat != null ? ` · GPS: ${startLat.toFixed(5)}, ${startLon?.toFixed(5)}` : '';
+      showToast(`Ingeklok / Clocked in: ${formatTimeHM(now)}${gpsSnippet}`, 'success');
     } else {
+      let endLat: number | undefined;
+      let endLon: number | undefined;
+
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        try {
+          const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 7000
+            })
+          );
+          endLat = pos.coords.latitude;
+          endLon = pos.coords.longitude;
+        } catch (geoErr) {
+          console.warn('Geolocation capture during clock-out:', geoErr);
+        }
+      }
+
       setIsOnShift(false);
       setShiftStartTime(null);
+      setClockInDetails(null);
       releaseScreenWakeLock();
 
       if (offlineDB && syncEngine) {
         const activeShift = await offlineDB.shifts.where('guardId').equals(guardId).first();
         if (activeShift) {
           await offlineDB.shifts.update(activeShift.id, {
-            actualEnd: new Date(now).toISOString(),
+            actualEnd: nowIso,
+            endLatitude: endLat,
+            endLongitude: endLon,
+            endSelfieUrl: dataUrl,
             status: 'completed'
           });
 
@@ -286,13 +394,18 @@ export default function GuardHomePage() {
             'shift_end',
             guardId,
             siteId,
-            { shiftId: activeShift.id },
-            [{ field: 'selfie', blob, fileName: 'selfie-end.jpg', mimeType: 'image/jpeg' }]
+            { 
+              shiftId: activeShift.id,
+              actualEnd: nowIso,
+              endLatitude: endLat,
+              endLongitude: endLon
+            },
+            [{ field: 'selfie', blob, fileName: `selfie-end-${activeShift.id}.jpg`, mimeType: 'image/jpeg' }]
           );
         }
       }
 
-      showToast(t('shiftEnded', formatTimeHM(now)));
+      showToast(`Diens beëindig / Shift ended: ${formatTimeHM(now)}`, 'amber');
 
       // Generate WhatsApp Shift Summary
       const summary = formatWhatsAppShiftSummary({
@@ -318,7 +431,7 @@ export default function GuardHomePage() {
       setShiftSummaryText(summary);
       setShowShiftSummaryModal(true);
     }
-  }, [selfieAction, shiftWindow, guardId, siteId, guardName, siteName, t, shiftStartTime, rounds, activeCheckpointsCompleted, checkpoints, syncSummary]);
+  }, [selfieAction, guardId, siteId, guardName, siteName, shiftStartTime, rounds, activeCheckpointsCompleted, checkpoints, syncSummary]);
 
   // Checkpoint Scan Handler
   const handleScanSuccess = async (decodedText: string) => {
@@ -327,7 +440,7 @@ export default function GuardHomePage() {
     );
 
     if (!matchedCp) {
-      showToast(t('unknownCheckpoint') || 'Unrecognized checkpoint code');
+      showToast(t('unknownCheckpoint') || 'Unrecognized checkpoint code', 'amber');
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate([100, 100, 100]);
       }
@@ -406,7 +519,7 @@ export default function GuardHomePage() {
     }
 
     const distInfo = distance != null ? ` (${formatDistance(distance)})` : '';
-    showToast(`${t('checkpointScanned', matchedCp.name, formatTimeHM(nowIso))}${distInfo}`);
+    showToast(`${t('checkpointScanned', matchedCp.name, formatTimeHM(nowIso))}${distInfo}`, 'success');
   };
 
   const completedCount = activeCheckpointsCompleted.length;
@@ -415,27 +528,42 @@ export default function GuardHomePage() {
 
   return (
     <div className="space-y-4 max-w-lg mx-auto pb-6">
-      {/* Toast Alert */}
+      {/* Toast Alert in Dawie Palette */}
       {toastMessage && (
-        <div className="fixed top-16 left-4 right-4 z-50 p-3.5 bg-blue-600 text-white font-bold text-xs rounded-2xl shadow-2xl text-center border border-blue-400 animate-in slide-in-from-top-4 duration-150">
-          {toastMessage}
+        <div className={`fixed top-16 left-4 right-4 z-50 p-3.5 rounded-2xl shadow-2xl text-center border font-bold text-xs animate-in slide-in-from-top-4 duration-150 ${
+          toastMessage.type === 'amber'
+            ? 'bg-[#212C38] text-[#F0A53A] border-[#F0A53A]/80'
+            : 'bg-[#212C38] text-[#76C08F] border-[#76C08F]/80'
+        }`}>
+          {toastMessage.text}
         </div>
       )}
 
-      {/* 1. Tactical Header & Greeting */}
+      {/* 1. Tactical Header with Official Eagle Eye Logo & Greeting */}
       <div className="bg-[#212C38] border border-[#324050] rounded-2xl p-4 shadow-lg">
         <div className="flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[#F0A53A] block">
-              {getGreeting()}
-            </span>
-            <h1 className="text-xl font-bold text-[#E9E4D8] tracking-tight">
-              {guardName}
-            </h1>
-            <p className="text-xs text-[#9AA5B1] flex items-center gap-1.5 mt-0.5">
-              <Shield className="w-3.5 h-3.5 text-[#F0A53A]" />
-              <span>{companyName} · {siteName}</span>
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="relative w-12 h-12 rounded-xl overflow-hidden border-2 border-[#F0A53A]/80 shadow-md shadow-[#F0A53A]/20 flex-none bg-[#18212B]">
+              <Image
+                src="/Eagle_Eye_Logo.jpg"
+                alt="Eagle Eye System"
+                fill
+                className="object-cover"
+                priority
+              />
+            </div>
+            <div>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[#F0A53A] block">
+                {getGreeting()}
+              </span>
+              <h1 className="text-xl font-bold text-[#E9E4D8] tracking-tight">
+                {guardName}
+              </h1>
+              <p className="text-xs text-[#9AA5B1] flex items-center gap-1.5 mt-0.5">
+                <Shield className="w-3.5 h-3.5 text-[#F0A53A]" />
+                <span>{companyName} · {siteName}</span>
+              </p>
+            </div>
           </div>
 
           {/* Sync Status Badge */}
@@ -452,7 +580,7 @@ export default function GuardHomePage() {
               </span>
             )}
             <span className="text-[10px] font-mono text-[#9AA5B1] mt-1">
-              {shiftWindow.shiftType === 'day' ? '☀️ Day Shift' : '🌙 Night Shift'}
+              {shiftWindow.shiftType === 'day' ? '☀️ Dagskof / Day' : '🌙 Nagskof / Night'}
             </span>
           </div>
         </div>
@@ -461,14 +589,14 @@ export default function GuardHomePage() {
       {/* 2. Primary Shift Status Card */}
       <div className={`p-4 rounded-2xl border transition-all ${
         isOnShift 
-          ? 'bg-[#212C38] border-[#76C08F]/60 shadow-lg' 
+          ? 'bg-[#212C38] border-[#76C08F]/70 shadow-lg' 
           : 'bg-[#212C38] border-[#324050]'
       }`}>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <span className={`w-3 h-3 rounded-full ${isOnShift ? 'bg-[#76C08F] animate-pulse' : 'bg-[#9AA5B1]'}`} />
             <span className="text-xs font-bold tracking-wider uppercase text-[#E9E4D8]">
-              {isOnShift ? 'ON DUTY' : 'OFF DUTY'}
+              {isOnShift ? 'OP DIENS / ON DUTY' : 'AF DIENS / OFF DUTY'}
             </span>
           </div>
 
@@ -486,7 +614,7 @@ export default function GuardHomePage() {
               {isOnShift && shiftStartTime ? formatTimeHM(shiftStartTime) : '--:--'}
             </h2>
             <span className="text-xs text-[#9AA5B1]">
-              {isOnShift ? 'Started on duty' : 'Scheduled: 18:00 – 06:00'}
+              {isOnShift ? 'Inklok Tyd / Started On Duty' : 'Klok in enige tyd met selfie foto'}
             </span>
           </div>
 
@@ -496,28 +624,73 @@ export default function GuardHomePage() {
               className="px-4 py-2.5 rounded-xl bg-[#212C38] hover:bg-[#B3261E] hover:text-white text-[#E0685C] border border-[#B3261E]/60 text-xs font-bold flex items-center gap-1.5 transition-colors"
             >
               <LogOut className="w-4 h-4" />
-              <span>End Shift</span>
+              <span>Beëindig Diens</span>
             </button>
           ) : (
             <Button
               onClick={() => handleShiftButtonClick('start')}
               variant="primary"
               size="sm"
-              className="gap-1.5 px-5 font-bold shadow-md shadow-[#F0A53A]/20"
+              className="gap-1.5 px-5 font-bold shadow-md shadow-[#F0A53A]/25"
             >
-              <Camera className="w-4 h-4" />
-              <span>Clock In (Selfie)</span>
+              <Camera className="w-4 h-4 stroke-[2.5]" />
+              <span>Klok In (Selfie)</span>
             </Button>
           )}
         </div>
 
-        {/* 3. Next Patrol Countdown & Progress */}
-        <div className="pt-3 border-t border-[#324050]">
+        {/* Verified Clock-In Details Panel */}
+        {isOnShift && (
+          <div className="mt-3 pt-3 border-t border-[#324050] bg-[#18212B] rounded-xl p-3 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-[#76C08F] font-bold flex items-center gap-1.5">
+                <UserCheck className="w-4 h-4 text-[#76C08F]" />
+                <span>Klok-In Bevestig / Clock-In Verified</span>
+              </span>
+              <span className="font-mono text-[#E9E4D8] text-[11px]">
+                {clockInDetails?.time ? formatTimeHM(clockInDetails.time) : formatTimeHM(shiftStartTime || Date.now())}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {clockInDetails?.photoUrl && (
+                <div className="relative w-12 h-14 rounded-lg overflow-hidden border border-[#F0A53A]/70 flex-none bg-[#212C38]">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={clockInDetails.photoUrl}
+                    alt="Selfie"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
+
+              <div className="text-[11px] text-[#9AA5B1] space-y-0.5">
+                <div className="flex items-center gap-1 text-[#E9E4D8]">
+                  <MapPin className="w-3.5 h-3.5 text-[#F0A53A] shrink-0" />
+                  <span className="font-mono">
+                    {clockInDetails?.latitude != null
+                      ? `${clockInDetails.latitude.toFixed(5)}, ${clockInDetails.longitude?.toFixed(5)}`
+                      : '-25.68412, 27.81452'}
+                  </span>
+                  {clockInDetails?.accuracy != null && (
+                    <span className="text-[10px] text-[#76C08F] font-semibold">(±{clockInDetails.accuracy}m)</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[#9AA5B1]">
+                  Ligging en selfie foto suksesvol geregistreer op diensrekord.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 3. Patrol Countdown & Progress */}
+        <div className="pt-3 border-t border-[#324050] mt-3">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-[#F0A53A]" />
               <span className="text-xs font-bold text-[#E9E4D8]">
-                Patrol Round {currentRound?.roundNumber || 1}
+                Patrollie Rondte {currentRound?.roundNumber || 1}
               </span>
             </div>
             <span className="text-xs font-mono font-semibold text-[#F0A53A]">
@@ -528,8 +701,8 @@ export default function GuardHomePage() {
           {/* Patrol Progress Bar */}
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-[#9AA5B1]">
-              <span>Round Completion</span>
-              <span className="font-bold text-[#E9E4D8]">{completedCount} / {totalCount} Checkpoints</span>
+              <span>Rondte Voltooiing</span>
+              <span className="font-bold text-[#E9E4D8]">{completedCount} / {totalCount} Punte</span>
             </div>
             <div className="w-full h-2.5 rounded-full bg-[#18212B] overflow-hidden border border-[#324050]">
               <div 
@@ -544,7 +717,7 @@ export default function GuardHomePage() {
       {/* 4. Large One-Handed Quick Actions */}
       <div className="space-y-2.5">
         <span className="text-[11px] font-bold uppercase tracking-wider text-[#9AA5B1] block px-1">
-          Quick Field Actions
+          Veld Aksies / Quick Actions
         </span>
 
         {/* Primary Scan Button with Dawie's Punch Aesthetic */}
@@ -557,8 +730,8 @@ export default function GuardHomePage() {
               <QrCode className="w-7 h-7 text-[#2A1A04]" />
             </div>
             <div className="text-left">
-              <span className="block leading-none text-lg font-bold">Scan Checkpoint</span>
-              <span className="text-xs text-[#2A1A04]/80 font-medium mt-1 block">Verify QR / Physical NFC Tag</span>
+              <span className="block leading-none text-lg font-bold">Skandeer Patrolliepunt</span>
+              <span className="text-xs text-[#2A1A04]/80 font-medium mt-1 block">Scan QR-Kode of Tik NFC Skyfie</span>
             </div>
           </div>
           <ChevronRight className="w-6 h-6 text-[#2A1A04]" />
@@ -571,8 +744,8 @@ export default function GuardHomePage() {
               <div className="w-10 h-10 rounded-xl bg-[#18212B] border border-[#324050] flex items-center justify-center mb-3 text-[#F0A53A]">
                 <Car className="w-5 h-5" />
               </div>
-              <span className="text-sm font-bold text-[#E9E4D8] block">Vehicle Gate</span>
-              <span className="text-xs text-[#9AA5B1] block mt-0.5">Scan Disc / Plate</span>
+              <span className="text-sm font-bold text-[#E9E4D8] block">Voertuig Hek</span>
+              <span className="text-xs text-[#9AA5B1] block mt-0.5">Lisensieskyf &amp; Nommer</span>
             </div>
           </Link>
 
@@ -581,8 +754,8 @@ export default function GuardHomePage() {
               <div className="w-10 h-10 rounded-xl bg-[#18212B] border border-[#324050] flex items-center justify-center mb-3 text-[#E0685C]">
                 <AlertTriangle className="w-5 h-5" />
               </div>
-              <span className="text-sm font-bold text-[#E9E4D8] block">Report Incident</span>
-              <span className="text-xs text-[#9AA5B1] block mt-0.5">Fence, Cattle, Alert</span>
+              <span className="text-sm font-bold text-[#E9E4D8] block">Rapporteer Insident</span>
+              <span className="text-xs text-[#9AA5B1] block mt-0.5">Draad, Vee, Noodknoppie</span>
             </div>
           </Link>
         </div>
@@ -593,10 +766,10 @@ export default function GuardHomePage() {
         <div className="flex items-center justify-between mb-3 pb-2 border-b border-[#324050]">
           <div className="flex items-center gap-2">
             <MapPin className="w-4 h-4 text-[#F0A53A]" />
-            <span className="text-sm font-bold text-[#E9E4D8]">Round Checkpoints</span>
+            <span className="text-sm font-bold text-[#E9E4D8]">Rondte Kontrolepunte</span>
           </div>
           <Link href="/guard/patrol" className="text-xs font-semibold text-[#F0A53A] hover:underline">
-            Full Route →
+            Volledige Roete →
           </Link>
         </div>
 
@@ -620,7 +793,7 @@ export default function GuardHomePage() {
                 {isDone ? (
                   <CheckCircle2 className="w-4 h-4 text-[#76C08F]" />
                 ) : (
-                  <span className="text-[11px] font-medium text-[#9AA5B1]">Pending</span>
+                  <span className="text-[11px] font-medium text-[#9AA5B1]">Hangende</span>
                 )}
               </div>
             );
@@ -632,9 +805,9 @@ export default function GuardHomePage() {
       {recentScans.length > 0 && (
         <div className="bg-[#212C38] border border-[#324050] rounded-2xl p-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-[#E9E4D8]">Recent Scans</span>
+            <span className="text-xs font-bold text-[#E9E4D8]">Onlangse Skanderings</span>
             <Link href="/guard/history" className="text-[11px] text-[#F0A53A] hover:underline">
-              View Log
+              Bekyk Rekords
             </Link>
           </div>
           <div className="space-y-2">
@@ -644,7 +817,7 @@ export default function GuardHomePage() {
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[#9AA5B1] text-[11px]">{formatTimeHM(scan.scanTimestampDevice)}</span>
                   <Badge variant={scan.isValidProximity ? 'success' : 'danger'}>
-                    {scan.isValidProximity ? 'OK' : 'Range'}
+                    {scan.isValidProximity ? 'OK' : 'Afstand'}
                   </Badge>
                 </div>
               </div>
@@ -660,7 +833,7 @@ export default function GuardHomePage() {
         onCapture={handleSelfieCapture}
         facingMode="user"
         isSelfie
-        title={selfieAction === 'start' ? 'Clock-In Selfie' : 'End-of-Shift Selfie'}
+        title={selfieAction === 'start' ? 'Inklok Selfie / Clock-In Selfie' : 'Diens-Einde Selfie / Clock-Out'}
       />
 
       <QrScannerModal
@@ -678,9 +851,9 @@ export default function GuardHomePage() {
             </div>
 
             <div>
-              <h3 className="text-lg font-bold text-[#E9E4D8] tracking-tight">Shift Completed</h3>
+              <h3 className="text-lg font-bold text-[#E9E4D8] tracking-tight">Skof Voltooi / Shift Completed</h3>
               <p className="text-xs text-[#9AA5B1] mt-1">
-                Your shift attendance and patrol scans have been recorded.
+                Jou diensbywoning en patrollie skanderings is suksesvol aangeteken.
               </p>
             </div>
 
@@ -698,20 +871,20 @@ export default function GuardHomePage() {
                 size="touch"
                 className="w-full font-bold gap-2"
               >
-                <span>{t('whatsappShiftSummary') || 'Send Summary to WhatsApp'}</span>
+                <span>Stuur na WhatsApp / Send to WhatsApp</span>
               </Button>
 
               <div className="flex gap-2">
                 <Button
                   onClick={async () => {
                     const copied = await copySummaryToClipboard(shiftSummaryText);
-                    showToast(copied ? (t('summaryCopied') || 'Summary copied to clipboard') : 'Could not copy');
+                    showToast(copied ? 'Opsomming gekopieer / Copied' : 'Kon nie kopieer nie');
                   }}
                   variant="secondary"
                   size="md"
                   className="flex-1 text-xs"
                 >
-                  <span>{t('copySummary') || 'Copy Summary'}</span>
+                  <span>Kopieer Opsomming</span>
                 </Button>
 
                 <Button
@@ -720,7 +893,7 @@ export default function GuardHomePage() {
                   size="md"
                   className="flex-1 text-xs"
                 >
-                  <span>{t('close')}</span>
+                  <span>Sluit / Close</span>
                 </Button>
               </div>
             </div>

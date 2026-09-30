@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { 
   ShieldAlert, 
@@ -313,8 +314,16 @@ export default function SupervisorDashboardPage() {
               <Link href="/guard" className="p-2 rounded-xl bg-[#212C38] border border-[#324050] text-[#9AA5B1] hover:text-[#E9E4D8]">
                 <ArrowLeft className="w-5 h-5" />
               </Link>
+              <div className="relative w-9 h-9 rounded-xl overflow-hidden border border-[#F0A53A]/70 flex-none bg-[#18212B]">
+                <Image
+                  src="/Eagle_Eye_Logo.jpg"
+                  alt="Eagle Eye"
+                  fill
+                  className="object-cover"
+                />
+              </div>
               <div>
-                <h1 className="text-lg font-bold text-[#E9E4D8] tracking-tight flex items-center gap-2">
+                <h1 className="text-base sm:text-lg font-bold text-[#E9E4D8] tracking-tight flex items-center gap-2">
                   <span>Supervisor Operations Command</span>
                   <span className="w-2.5 h-2.5 rounded-full bg-[#76C08F] animate-pulse" />
                 </h1>

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { Wifi, WifiOff, RefreshCw, Globe, LogOut } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n/context';
 import { syncEngine } from '@/lib/offline/sync';
@@ -61,14 +62,24 @@ export function HeaderBar({ guardName }: { guardName?: string }) {
   return (
     <header className="sticky top-0 z-30 bg-[#18212B]/95 backdrop-blur-md border-b border-[#324050] px-4 py-2.5">
       <div className="max-w-md mx-auto flex items-center justify-between">
-        {/* Guard & Time */}
-        <div className="flex flex-col">
-          <span className="text-xs font-semibold text-[#9AA5B1] truncate max-w-[150px]">
-            {guardName || t('guardOnDuty') || 'Wag op diens'}
-          </span>
-          <span className="text-lg font-bold text-[#E9E4D8] font-mono tracking-tight leading-none mt-0.5">
-            {timeStr || '--:--'}
-          </span>
+        {/* Guard & Time with Official Eagle Eye Logo */}
+        <div className="flex items-center gap-2.5">
+          <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-[#F0A53A]/60 flex-none bg-[#18212B]">
+            <Image
+              src="/Eagle_Eye_Logo.jpg"
+              alt="Eagle Eye"
+              fill
+              className="object-cover"
+            />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-xs font-semibold text-[#9AA5B1] truncate max-w-[130px]">
+              {guardName || t('guardOnDuty') || 'Wag op diens'}
+            </span>
+            <span className="text-base font-bold text-[#E9E4D8] font-mono tracking-tight leading-none mt-0.5">
+              {timeStr || '--:--'}
+            </span>
+          </div>
         </div>
 
         {/* Status Indicators, Language & Logout */}

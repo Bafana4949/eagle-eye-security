@@ -3,7 +3,8 @@
 import React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ShieldCheck, LogOut } from 'lucide-react';
+import Image from 'next/image';
+import { LogOut } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 
@@ -47,8 +48,14 @@ export function HeaderNav({
         {/* Brand & Context */}
         <div className="flex items-center gap-3 min-w-0">
           <Link href="/login" className="flex items-center gap-2.5 flex-none group">
-            <div className="w-10 h-10 rounded-xl bg-radial from-[#FFC76A] via-[#F0A53A] to-[#C9801C] flex items-center justify-center text-[#2A1A04] shadow-md shadow-[#F0A53A]/20 border border-[#F0A53A]/60">
-              <ShieldCheck className="w-6 h-6 stroke-[2.5]" />
+            <div className="relative w-10 h-10 rounded-xl overflow-hidden shadow-md shadow-[#F0A53A]/20 border border-[#F0A53A]/70 flex-none bg-[#18212B]">
+              <Image
+                src="/Eagle_Eye_Logo.jpg"
+                alt="Eagle Eye Logo"
+                fill
+                className="object-cover"
+                priority
+              />
             </div>
             <div className="hidden sm:block">
               <span className="text-base font-bold tracking-tight text-[#E9E4D8] block leading-none">

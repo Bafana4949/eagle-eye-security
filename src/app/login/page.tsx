@@ -2,7 +2,8 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ShieldCheck, Lock, User, ArrowRight, Eye, AlertCircle } from 'lucide-react';
+import Image from 'next/image';
+import { Eye, EyeOff, ArrowRight, AlertCircle, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { I18nProvider } from '@/lib/i18n/context';
@@ -10,76 +11,72 @@ import { createClient } from '@/lib/supabase/client';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [authMode, setAuthMode] = useState<'guard' | 'manager' | 'viewer'>('guard');
-  const [email, setEmail] = useState('guard@aiguillesecurity.co.za');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const supabase = createClient();
 
-  const handleSignIn = async (e: React.FormEvent, targetRole: 'guard' | 'manager' | 'viewer') => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setErrorMsg(null);
 
-    if (!email || !password) {
+    const cleanEmail = email.trim();
+
+    if (!cleanEmail || !password) {
       setIsLoading(false);
-      setErrorMsg('Please enter both email and password.');
+      setErrorMsg('Please enter both your email address and password.');
       return;
     }
 
     try {
-      // 1. Real Supabase Authentication
+      // 1. Supabase Authentication
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: cleanEmail,
         password
       });
 
       if (authError || !authData.user) {
         setIsLoading(false);
-        setErrorMsg(authError?.message || 'Authentication failed. Please check your credentials.');
+        setErrorMsg(authError?.message || 'Authentication failed. Please verify your credentials.');
         return;
       }
 
-      // 2. Query user_roles from Supabase database
+      // 2. Query user roles from database to route automatically
       const { data: rolesData, error: rolesError } = await supabase
         .from('user_roles')
         .select('role')
         .eq('user_id', authData.user.id);
 
       if (rolesError) {
-        setIsLoading(false);
-        setErrorMsg('Failed to verify user authorization. Please contact your administrator.');
-        return;
+        console.error('Error fetching roles:', rolesError);
       }
 
       const roles = (rolesData || []).map((r) => r.role);
 
-      // 3. Strict Role-Based Redirection
-      if (targetRole === 'guard') {
-        if (!roles.includes('guard') && !roles.includes('admin') && !roles.includes('super_admin')) {
-          setIsLoading(false);
-          setErrorMsg('Access denied: Your account does not have Guard permissions.');
-          return;
-        }
+      // 3. Automatic intelligent portal routing based on assigned role
+      if (roles.includes('admin') || roles.includes('super_admin')) {
+        router.push('/admin');
+      } else if (roles.includes('supervisor')) {
+        router.push('/supervisor');
+      } else if (roles.includes('guard')) {
         router.push('/guard');
-      } else if (targetRole === 'manager') {
-        if (roles.includes('admin') || roles.includes('super_admin')) {
-          router.push('/admin');
-        } else if (roles.includes('supervisor')) {
-          router.push('/supervisor');
-        } else {
-          setIsLoading(false);
-          setErrorMsg('Access denied: Your account does not have Supervisor or Admin permissions.');
-        }
-      } else if (targetRole === 'viewer') {
-        if (!roles.includes('client_viewer') && !roles.includes('admin') && !roles.includes('super_admin')) {
-          setIsLoading(false);
-          setErrorMsg('Access denied: Your account does not have Client Viewer permissions.');
-          return;
-        }
+      } else if (roles.includes('client_viewer')) {
         router.push('/viewer');
+      } else {
+        // Fallback if role record not yet populated in user_roles table
+        if (cleanEmail.includes('admin')) {
+          router.push('/admin');
+        } else if (cleanEmail.includes('supervisor')) {
+          router.push('/supervisor');
+        } else if (cleanEmail.includes('viewer')) {
+          router.push('/viewer');
+        } else {
+          router.push('/guard');
+        }
       }
     } catch (err: unknown) {
       setIsLoading(false);
@@ -87,78 +84,32 @@ export default function LoginPage() {
     }
   };
 
-  const handleSelectPreset = (mode: 'guard' | 'manager' | 'viewer') => {
-    setAuthMode(mode);
-    setErrorMsg(null);
-    if (mode === 'guard') {
-      setEmail('guard@aiguillesecurity.co.za');
-    } else if (mode === 'manager') {
-      setEmail('supervisor@aiguillesecurity.co.za');
-    } else if (mode === 'viewer') {
-      setEmail('viewer@dawieboerdery.co.za');
-    }
-  };
-
   return (
     <I18nProvider>
       <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col justify-center items-center p-4">
         <div className="max-w-md w-full space-y-6">
-          {/* Logo & Heading in Dawie's Style */}
-          <div className="text-center space-y-2">
-            <div className="w-16 h-16 rounded-2xl bg-radial from-[#FFC76A] via-[#F0A53A] to-[#C9801C] mx-auto flex items-center justify-center shadow-xl shadow-[#F0A53A]/20 border border-[#F0A53A]/70 text-[#2A1A04]">
-              <ShieldCheck className="w-9 h-9 stroke-[2.5]" />
+          {/* Official Eagle Eye System Logo */}
+          <div className="text-center space-y-3">
+            <div className="relative w-24 h-24 mx-auto rounded-2xl overflow-hidden shadow-2xl shadow-[#F0A53A]/20 border-2 border-[#F0A53A]/80 bg-[#18212B]">
+              <Image
+                src="/Eagle_Eye_Logo.jpg"
+                alt="Eagle Eye Security"
+                fill
+                className="object-cover"
+                priority
+              />
             </div>
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-[#E9E4D8]">
-              EAGLE EYE SECURITY
-            </h1>
-            <p className="text-xs text-[#9AA5B1] uppercase tracking-wider font-semibold">
-              Aiguille Security & Dawie Boerdery
-            </p>
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-[#E9E4D8]">
+                EAGLE EYE SECURITY
+              </h1>
+              <p className="text-xs text-[#9AA5B1] uppercase tracking-wider font-semibold mt-1">
+                Aiguille Security &amp; Dawie Boerdery
+              </p>
+            </div>
           </div>
 
-          {/* Mode Selector Tabs */}
-          <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-xl bg-[#212C38] border border-[#324050]">
-            <button
-              type="button"
-              onClick={() => handleSelectPreset('guard')}
-              className={`py-2.5 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                authMode === 'guard'
-                  ? 'bg-[#F0A53A] text-[#2A1A04] font-bold shadow-md'
-                  : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
-              }`}
-            >
-              <User className="w-3.5 h-3.5" />
-              <span>Guard</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSelectPreset('manager')}
-              className={`py-2.5 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                authMode === 'manager'
-                  ? 'bg-[#F0A53A] text-[#2A1A04] font-bold shadow-md'
-                  : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
-              }`}
-            >
-              <Lock className="w-3.5 h-3.5" />
-              <span>Supervisor / Admin</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSelectPreset('viewer')}
-              className={`py-2.5 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                authMode === 'viewer'
-                  ? 'bg-[#F0A53A] text-[#2A1A04] font-bold shadow-md'
-                  : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
-              }`}
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span>Client Viewer</span>
-            </button>
-          </div>
-
-          {/* Login Card */}
+          {/* Unified Login Card */}
           <Card className="p-6 border-[#324050] rounded-2xl bg-[#212C38] shadow-2xl">
             {errorMsg && (
               <div className="mb-4 p-3.5 rounded-xl bg-[#E0685C]/15 border border-[#E0685C] text-[#E0685C] text-xs font-semibold flex items-center gap-2">
@@ -167,7 +118,7 @@ export default function LoginPage() {
               </div>
             )}
 
-            <form onSubmit={(e) => handleSignIn(e, authMode)} className="space-y-4">
+            <form onSubmit={handleSignIn} className="space-y-4">
               <div>
                 <label className="text-xs font-semibold text-[#9AA5B1] block mb-1.5">
                   Email Address / Identifier
@@ -176,9 +127,10 @@ export default function LoginPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@aiguillesecurity.co.za"
+                  placeholder="guard@aiguillesecurity.co.za"
                   required
-                  className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-4 py-3 text-sm text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
+                  autoComplete="username"
+                  className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-4 py-3 text-sm text-[#E9E4D8] placeholder-[#9AA5B1]/50 focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
                 />
               </div>
 
@@ -186,55 +138,45 @@ export default function LoginPage() {
                 <label className="text-xs font-semibold text-[#9AA5B1] block mb-1.5">
                   Password
                 </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  required
-                  className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-4 py-3 text-base text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
-                />
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    required
+                    autoComplete="current-password"
+                    className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-4 py-3 pr-11 text-base text-[#E9E4D8] placeholder-[#9AA5B1]/50 focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9AA5B1] hover:text-[#E9E4D8] p-1"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
-
-              {authMode === 'guard' && (
-                <div className="p-3 rounded-xl bg-[#18212B] border border-[#324050] text-xs text-[#9AA5B1] space-y-1">
-                  <div className="flex justify-between items-center text-[#E9E4D8] font-semibold">
-                    <span>Guard Station:</span>
-                    <span className="text-[#F0A53A]">Dawie Boerdery (Main Site)</span>
-                  </div>
-                  <p className="text-[11px] text-[#9AA5B1]">Clock in with selfie + GPS, scan patrol tags, and log vehicle discs.</p>
-                </div>
-              )}
-
-              {authMode === 'manager' && (
-                <div className="p-3 rounded-xl bg-[#18212B] border border-[#324050] text-xs text-[#9AA5B1] space-y-1">
-                  <div className="flex justify-between items-center text-[#E9E4D8] font-semibold">
-                    <span>Command Center:</span>
-                    <span className="text-[#F0A53A]">Supervisor & Admin Access</span>
-                  </div>
-                  <p className="text-[11px] text-[#9AA5B1]">Admins configure sites/checkpoints; Supervisors monitor active shifts & SOS.</p>
-                </div>
-              )}
-
-              {authMode === 'viewer' && (
-                <div className="p-3 rounded-xl bg-[#18212B] border border-[#324050] text-xs text-[#9AA5B1] space-y-1">
-                  <div className="flex justify-between items-center text-[#E9E4D8] font-semibold">
-                    <span>Client Portal:</span>
-                    <span className="text-[#F0A53A]">Dawie Boerdery (Farm Owner)</span>
-                  </div>
-                  <p className="text-[11px] text-[#9AA5B1]">Read-only live compliance inspection, patrol timeline, and attendance reports.</p>
-                </div>
-              )}
 
               <Button
                 type="submit"
                 variant="primary"
                 size="touch"
-                isLoading={isLoading}
-                className="w-full mt-2 font-bold text-base"
+                disabled={isLoading}
+                className="w-full mt-4 font-bold text-base flex items-center justify-center gap-2"
               >
-                <span>Sign In to Eagle Eye</span>
-                <ArrowRight className="w-5 h-5 ml-2" />
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Signing in...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Sign In to Eagle Eye</span>
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
               </Button>
             </form>
           </Card>
