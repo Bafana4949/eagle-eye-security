@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Offline - Eagle Eye Security</title>
+  <style>
+    body {
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 24px;
+      text-align: center;
+    }
+    .card {
+      background-color: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 32px 24px;
+      max-width: 400px;
+      width: 100%;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+    .icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin: 0 0 12px;
+    }
+    p {
+      color: #94a3b8;
+      font-size: 15px;
+      line-height: 1.5;
+      margin: 0 0 24px;
+    }
+    .btn {
+      background-color: #3b82f6;
+      color: #ffffff;
+      border: none;
+      border-radius: 10px;
+      padding: 14px 24px;
+      font-size: 16px;
+      font-weight: 600;
+      width: 100%;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">📡</div>
+    <h1>Working Offline / Vanlyn Modus</h1>
+    <p>You are currently offline. Your patrol scans, incidents, and vehicle records are securely stored locally and will synchronize automatically when connection returns.</p>
+    <button class="btn" onclick="window.location.reload()">Retry Connection</button>
+  </div>
+</body>
+</html>
