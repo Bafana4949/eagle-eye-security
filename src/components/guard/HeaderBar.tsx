@@ -142,7 +142,7 @@ export function HeaderBar({ siteLocked = false }: HeaderBarProps) {
       <header className="sticky top-0 z-30 border-b border-ee-border bg-ee-bg pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex max-w-md items-center gap-2 px-4 py-2">
           <Image
-            src="/Eagle_Eye_Logo.jpg"
+            src="/eagle_eye_enhanced_emblem.jpg"
             alt=""
             width={36}
             height={36}

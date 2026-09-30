@@ -698,7 +698,7 @@ export function HeaderNav({ title, subtitle, showBack = false, backHref, rightAc
             data-testid="chrome-header-home"
           >
             <Image
-              src="/Eagle_Eye_Logo.jpg"
+              src="/eagle_eye_enhanced_emblem.jpg"
               alt=""
               width={40}
               height={40}

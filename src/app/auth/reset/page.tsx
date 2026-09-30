@@ -267,7 +267,7 @@ export default function ResetPasswordPage() {
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
           <Image
-            src="/Eagle_Eye_Logo.jpg"
+            src="/eagle_eye_enhanced_emblem.jpg"
             alt={t('authLogoAlt')}
             width={72}
             height={72}

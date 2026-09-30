@@ -71,7 +71,7 @@ function LoginHeader() {
   return (
     <div className="text-center">
       <Image
-        src="/Eagle_Eye_Logo.jpg"
+        src="/eagle_eye_enhanced_emblem.jpg"
         alt={t('authLogoAlt')}
         width={88}
         height={88}

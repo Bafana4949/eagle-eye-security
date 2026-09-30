@@ -53,6 +53,7 @@ const PRECACHE_ASSETS = [
   '/icon-maskable-512.png',
   '/apple-touch-icon.png',
   '/Eagle_Eye_Logo.jpg',
+  '/eagle_eye_enhanced_emblem.jpg',
 ];
 const PRECACHE_ASSET_SET = new Set(PRECACHE_ASSETS);
 

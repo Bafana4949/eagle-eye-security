@@ -22,7 +22,7 @@ function GuardGate({ children, testId }: { children: React.ReactNode; testId: st
       <header className="border-b border-ee-border pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex max-w-md items-center gap-3 px-4 py-3">
           <Image
-            src="/Eagle_Eye_Logo.jpg"
+            src="/eagle_eye_enhanced_emblem.jpg"
             alt=""
             width={36}
             height={36}

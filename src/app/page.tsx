@@ -15,7 +15,7 @@ function Brand() {
   return (
     <div className="text-center">
       <Image
-        src="/Eagle_Eye_Logo.jpg"
+        src="/eagle_eye_enhanced_emblem.jpg"
         alt={t('authLogoAlt')}
         width={96}
         height={96}
