@@ -1,306 +1,488 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Camera, Flashlight, Upload, X, AlertTriangle, Edit3 } from 'lucide-react';
+/**
+ * South African licence-disc (PDF417) scanner.
+ *
+ * - The camera starts once when the dialog opens and stops (all tracks) when it closes or
+ *   unmounts. Parent re-renders never restart it: callbacks are read through refs and the
+ *   camera effect only depends on this dialog's own "camera on / retry" state.
+ * - ~1920x1080 environment camera (reference app), torch toggle when the track supports it,
+ *   low-light hint from a tiny brightness probe.
+ * - Decode loop every ~350 ms, never re-entrant (the next frame is scheduled only after the
+ *   previous decode finished), using the foundation scanner (BarcodeDetector 'pdf417' →
+ *   ZXing PDF_417-only fallback).
+ * - Only barcodes the licence-disc parser accepts are returned; anything else shows
+ *   "That is not a licence disc barcode" and scanning continues.
+ * - "Scan from photo" (multi-scale decode) and "Type the number" are always available,
+ *   including when the camera is blocked, missing or unsupported.
+ */
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { Camera, Flashlight, FlashlightOff, ImageUp, Keyboard, RefreshCw, X } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n/context';
-import { scanPdf417, decodePdf417FromImageFile } from '@/lib/license-disc/scanner';
+import type { TranslationKey } from '@/lib/i18n/translations';
+import type { LicenseDiscData } from '@/types/models';
+import { decodePdf417FromImageFile, scanPdf417 } from '@/lib/license-disc/scanner';
+import { parseSouthAfricanLicenseDisc } from '@/lib/license-disc/parser';
+import { useDialogFocus } from '@/components/guard/gate/useDialogFocus';
 
-interface LicenceDiscScannerModalProps {
+export interface LicenceDiscScannerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onScanSuccess: (rawBarcodeText: string) => void;
-  onManualEntryFallback: () => void;
+  /** Called once with a disc the licence-disc parser accepted. The parent closes the dialog. */
+  onDiscRead: (disc: LicenseDiscData) => void;
+  /** "Type the number": the parent closes the dialog and focuses the registration field. */
+  onManualEntry: () => void;
 }
 
-export function LicenceDiscScannerModal({
-  isOpen,
-  onClose,
-  onScanSuccess,
-  onManualEntryFallback
-}: LicenceDiscScannerModalProps) {
+type CameraErrorReason = 'denied' | 'no_camera' | 'unsupported' | 'failed';
+
+type CameraState =
+  | { kind: 'starting' }
+  | { kind: 'scanning' }
+  /** Camera switched off on purpose (e.g. so the phone's camera app can take a photo). */
+  | { kind: 'paused' }
+  | { kind: 'error'; reason: CameraErrorReason };
+
+type ScanMessage = 'not_disc' | 'no_barcode' | 'photo_failed' | 'torch_failed';
+
+const SCAN_INTERVAL_MS = 350;
+/** Frames are scaled to this long edge before decoding (reference app). */
+const FRAME_MAX_EDGE = 1400;
+/** Average luminance (0–255) below which a frame counts as dark. */
+const LOW_LIGHT_LUMA = 45;
+const LOW_LIGHT_SAMPLES = 3;
+const BRIGHTNESS_EVERY_N_FRAMES = 5;
+const NOT_DISC_BUZZ_GAP_MS = 2000;
+
+const CAMERA_ERROR_KEYS: Record<CameraErrorReason, TranslationKey> = {
+  denied: 'gateScanDenied',
+  no_camera: 'gateScanNoCamera',
+  unsupported: 'gateScanUnsupported',
+  failed: 'gateScanCameraFailed'
+};
+
+const MESSAGE_KEYS: Record<ScanMessage, TranslationKey> = {
+  not_disc: 'gateDiscNotDisc',
+  no_barcode: 'gateScanNoBarcode',
+  photo_failed: 'gateScanPhotoFailed',
+  torch_failed: 'gateScanTorchFailed'
+};
+
+function canUseLiveCamera(): boolean {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+  return window.isSecureContext !== false && typeof navigator.mediaDevices?.getUserMedia === 'function';
+}
+
+function cameraErrorReason(error: unknown): CameraErrorReason {
+  const name = error instanceof Error || (typeof error === 'object' && error !== null && 'name' in error)
+    ? String((error as { name?: unknown }).name)
+    : '';
+  if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') return 'denied';
+  if (name === 'NotFoundError' || name === 'OverconstrainedError' || name === 'DevicesNotFoundError') return 'no_camera';
+  if (name === 'TypeError') return 'unsupported';
+  return 'failed';
+}
+
+function vibrate(pattern: number | number[]): void {
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') navigator.vibrate(pattern);
+  } catch {
+    // Vibration is a courtesy only.
+  }
+}
+
+function averageLuma(data: Uint8ClampedArray): number {
+  let total = 0;
+  const pixels = data.length / 4;
+  for (let i = 0; i < data.length; i += 4) total += (data[i] * 306 + data[i + 1] * 601 + data[i + 2] * 117) >> 10;
+  return pixels > 0 ? total / pixels : 255;
+}
+
+export function LicenceDiscScannerModal(props: LicenceDiscScannerModalProps) {
+  if (!props.isOpen) return null;
+  return <ScannerDialog {...props} />;
+}
+
+function ScannerDialog({ onClose, onDiscRead, onManualEntry }: LicenceDiscScannerModalProps) {
   const { t } = useTranslation();
+  const titleId = useId();
+  const descriptionId = useId();
+
+  const [liveSupported] = useState(canUseLiveCamera);
+  const [camera, setCamera] = useState<CameraState>(() =>
+    liveSupported ? { kind: 'starting' } : { kind: 'error', reason: 'unsupported' }
+  );
+  /** false after the guard switched to "Scan from photo" (the live stream is released). */
+  const [cameraWanted, setCameraWanted] = useState(true);
+  /** Bumped by "Try camera again" to start the camera deliberately once more. */
+  const [cameraRun, setCameraRun] = useState(0);
+  const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
-  const [hasTorch, setHasTorch] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [lowLight, setLowLight] = useState(false);
+  const [message, setMessage] = useState<ScanMessage | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  const stopStream = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    setTorchOn(false);
-    setIsProcessing(false);
-  }, []);
-
-  const handleClose = useCallback(() => {
-    stopStream();
-    setErrorMsg(null);
-    onClose();
-  }, [stopStream, onClose]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const doneRef = useRef(false);
+  const lastNotDiscBuzzRef = useRef(0);
+  const onDiscReadRef = useRef(onDiscRead);
+  const onCloseRef = useRef(onClose);
 
   useEffect(() => {
-    if (!isOpen) return;
+    onDiscReadRef.current = onDiscRead;
+    onCloseRef.current = onClose;
+  });
 
-    let isMounted = true;
+  useDialogFocus(dialogRef, true, () => onCloseRef.current());
 
-    const startCamera = async () => {
-      try {
-        setErrorMsg(null);
-        if (!navigator.mediaDevices?.getUserMedia) {
-          setErrorMsg('Camera access is not supported on this device/browser');
-          return;
+  /**
+   * Accepts a decoded barcode only when the licence-disc parser recognises it and it carries a
+   * registration number. Returns true when the disc was handed to the parent.
+   */
+  const acceptBarcodeRef = useRef<(text: string) => boolean>(() => false);
+  useEffect(() => {
+    acceptBarcodeRef.current = (text: string) => {
+      if (doneRef.current) return true;
+      const disc = parseSouthAfricanLicenseDisc(text);
+      if (!disc || !disc.plate) {
+        setMessage('not_disc');
+        const now = Date.now();
+        if (now - lastNotDiscBuzzRef.current > NOT_DISC_BUZZ_GAP_MS) {
+          lastNotDiscBuzzRef.current = now;
+          vibrate([90, 60, 90]);
         }
+        return false;
+      }
+      doneRef.current = true;
+      vibrate(250);
+      onDiscReadRef.current(disc);
+      return true;
+    };
+  });
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-          }
-        });
+  // Camera lifecycle: one getUserMedia per (open, "try again"); stopped on close/unmount.
+  useEffect(() => {
+    if (!liveSupported || !cameraWanted) return;
+    let cancelled = false;
+    let stream: MediaStream | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const frameCanvas = document.createElement('canvas');
+    const frameContext = frameCanvas.getContext('2d', { willReadFrequently: true });
+    const probeCanvas = document.createElement('canvas');
+    probeCanvas.width = 32;
+    probeCanvas.height = 18;
+    const probeContext = probeCanvas.getContext('2d', { willReadFrequently: true });
+    let frameCount = 0;
+    let darkFrames = 0;
 
-        if (!isMounted) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
+    const stopCamera = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      stream?.getTracks().forEach((track) => track.stop());
+      if (streamRef.current === stream) streamRef.current = null;
+      stream = null;
+      const video = videoRef.current;
+      if (video) video.srcObject = null;
+    };
 
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
+    const scheduleNext = () => {
+      if (!cancelled && !doneRef.current) timer = setTimeout(() => void scanFrame(), SCAN_INTERVAL_MS);
+    };
 
-        // Check torch capability
-        try {
-          const track = stream.getVideoTracks()[0];
-          const caps = (track.getCapabilities ? track.getCapabilities() : {}) as { torch?: boolean };
-          if (caps.torch) {
-            setHasTorch(true);
-          }
-        } catch {
-          setHasTorch(false);
-        }
+    const scanFrame = async () => {
+      timer = null;
+      if (cancelled || doneRef.current) return;
+      const video = videoRef.current;
+      if (video && video.videoWidth > 0 && video.videoHeight > 0 && frameContext) {
+        const scale = Math.min(1, FRAME_MAX_EDGE / Math.max(video.videoWidth, video.videoHeight));
+        frameCanvas.width = Math.max(1, Math.floor(video.videoWidth * scale));
+        frameCanvas.height = Math.max(1, Math.floor(video.videoHeight * scale));
+        frameContext.drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
 
-        // Start scanning loop
-        const canvas = canvasRef.current || document.createElement('canvas');
-        canvasRef.current = canvas;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-        let scanBusy = false;
-
-        intervalRef.current = setInterval(async () => {
-          if (!videoRef.current || scanBusy || !isMounted) return;
-          const video = videoRef.current;
-          if (!video.videoWidth || !video.videoHeight) return;
-
-          scanBusy = true;
+        frameCount += 1;
+        if (probeContext && frameCount % BRIGHTNESS_EVERY_N_FRAMES === 0) {
           try {
-            // Downscale to ~1280px max for fast frame parsing
-            const scale = Math.min(1.0, 1280 / Math.max(video.videoWidth, video.videoHeight));
-            canvas.width = Math.floor(video.videoWidth * scale);
-            canvas.height = Math.floor(video.videoHeight * scale);
-
-            if (ctx) {
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-              const barcodeText = await scanPdf417(video, canvas);
-
-              if (barcodeText && isMounted) {
-                if (typeof navigator !== 'undefined' && navigator.vibrate) {
-                  navigator.vibrate(250);
-                }
-                stopStream();
-                onScanSuccess(barcodeText);
-              }
-            }
+            probeContext.drawImage(video, 0, 0, probeCanvas.width, probeCanvas.height);
+            const luma = averageLuma(probeContext.getImageData(0, 0, probeCanvas.width, probeCanvas.height).data);
+            darkFrames = luma < LOW_LIGHT_LUMA ? darkFrames + 1 : 0;
+            setLowLight(darkFrames >= LOW_LIGHT_SAMPLES);
           } catch {
-            // Drop error on busy frame
-          } finally {
-            scanBusy = false;
+            // Brightness is only a hint.
           }
-        }, 320);
+        }
 
-      } catch (err: unknown) {
-        if (!isMounted) return;
-        const error = err as Error;
-        if (error.name === 'NotAllowedError') {
-          setErrorMsg('Camera access was blocked. Please grant camera permission in your browser settings.');
-        } else {
-          setErrorMsg('Could not open camera. You can upload a photo or enter vehicle details manually.');
+        let text: string | null = null;
+        try {
+          text = await scanPdf417(video, frameCanvas);
+        } catch {
+          text = null;
+        }
+        if (cancelled) return;
+        if (text && acceptBarcodeRef.current(text)) {
+          stopCamera();
+          return;
         }
       }
+      scheduleNext();
     };
 
-    void startCamera();
+    const start = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+        });
+      } catch (error) {
+        if (!cancelled) setCamera({ kind: 'error', reason: cameraErrorReason(error) });
+        return;
+      }
+      if (cancelled) {
+        stream.getTracks().forEach((track) => track.stop());
+        stream = null;
+        return;
+      }
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        try {
+          await video.play();
+        } catch {
+          // Autoplay of a muted inline stream can still reject on some WebViews; frames may still arrive.
+        }
+      }
+      if (cancelled) {
+        stopCamera();
+        return;
+      }
+      let hasTorch = false;
+      try {
+        const track = stream.getVideoTracks()[0];
+        const capabilities = (track?.getCapabilities?.() ?? {}) as MediaTrackCapabilities & { torch?: boolean };
+        hasTorch = capabilities.torch === true;
+      } catch {
+        hasTorch = false;
+      }
+      setTorchSupported(hasTorch);
+      setTorchOn(false);
+      setCamera({ kind: 'scanning' });
+      scheduleNext();
+    };
 
+    void start();
     return () => {
-      isMounted = false;
-      stopStream();
+      cancelled = true;
+      stopCamera();
     };
-  }, [isOpen, stopStream, onScanSuccess]);
+  }, [liveSupported, cameraWanted, cameraRun]);
+
+  const releaseCamera = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setCameraWanted(false);
+    setTorchOn(false);
+    setLowLight(false);
+    if (liveSupported) setCamera({ kind: 'paused' });
+  };
+
+  const retryCamera = () => {
+    setMessage(null);
+    setCamera({ kind: 'starting' });
+    setCameraWanted(true);
+    setCameraRun((run) => run + 1);
+  };
 
   const toggleTorch = async () => {
-    if (!streamRef.current) return;
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) return;
+    const next = !torchOn;
     try {
-      const track = streamRef.current.getVideoTracks()[0];
-      const nextTorch = !torchOn;
-      // @ts-expect-error torch advanced constraint
-      await track.applyConstraints({ advanced: [{ torch: nextTorch }] });
-      setTorchOn(nextTorch);
+      await track.applyConstraints({ advanced: [{ torch: next } as unknown as MediaTrackConstraintSet] });
+      setTorchOn(next);
+      setMessage((current) => (current === 'torch_failed' ? null : current));
     } catch {
-      // Ignored
+      setMessage('torch_failed');
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const chooseFromPhoto = () => {
+    // Release the live camera first: on many Android phones the camera app cannot open while
+    // this page still holds the camera (reference app does the same).
+    releaseCamera();
+    fileInputRef.current?.click();
+  };
+
+  const onPhotoChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file) return;
-
-    setIsProcessing(true);
-    setErrorMsg(null);
-
+    setPhotoBusy(true);
+    setMessage(null);
     try {
-      const barcodeText = await decodePdf417FromImageFile(file);
-      if (barcodeText) {
-        if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          navigator.vibrate(250);
-        }
-        stopStream();
-        onScanSuccess(barcodeText);
+      const text = await decodePdf417FromImageFile(file);
+      if (!text) {
+        setMessage('no_barcode');
+        vibrate([90, 60, 90]);
       } else {
-        setErrorMsg('No vehicle licence disc barcode found in the photo. Hold camera close, keep steady and ensure good lighting.');
+        acceptBarcodeRef.current(text);
       }
     } catch {
-      setErrorMsg('Failed to process image. Please try again or enter details manually.');
+      setMessage('photo_failed');
     } finally {
-      setIsProcessing(false);
+      setPhotoBusy(false);
     }
   };
 
-  if (!isOpen) return null;
+  const cameraActive = camera.kind === 'starting' || camera.kind === 'scanning';
+  const statusKey: TranslationKey | null = photoBusy
+    ? 'gateScanReadingPhoto'
+    : camera.kind === 'starting'
+      ? 'gateScanStarting'
+      : camera.kind === 'scanning'
+        ? 'gateScanScanning'
+        : camera.kind === 'paused'
+          ? 'gateScanPaused'
+          : null;
+  const canRetryCamera =
+    liveSupported && (camera.kind === 'paused' || (camera.kind === 'error' && camera.reason !== 'unsupported'));
+
+  const secondaryButton =
+    'flex min-h-14 w-full items-center justify-center gap-2 rounded-lg border border-ee-border bg-ee-bg px-4 text-base font-semibold text-ee-text hover:bg-ee-surface-raised active:bg-ee-surface-raised disabled:opacity-50';
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between p-4 animate-in fade-in duration-150">
-      {/* Top Header */}
-      <div className="flex items-center justify-between z-10 pt-2 px-2">
-        <div>
-          <h3 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-            <Camera className="w-5 h-5 text-amber-400" />
-            <span>{t('scanLicenceDisc')}</span>
-          </h3>
-          <p className="text-[11px] text-slate-400 font-medium">South African MVL PDF417 Barcode</p>
-        </div>
-
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      tabIndex={-1}
+      data-testid="gate-scanner"
+      className="fixed inset-0 z-50 flex flex-col bg-ee-bg text-ee-text focus:outline-none"
+    >
+      <header className="flex items-center justify-between gap-3 border-b border-ee-border bg-ee-surface px-4 py-2">
+        <h2 id={titleId} className="font-display text-xl font-bold uppercase tracking-wide">
+          {t('gateScanTitle')}
+        </h2>
         <button
-          onClick={handleClose}
-          className="p-2.5 rounded-full bg-slate-800/80 text-slate-300 hover:text-white"
+          type="button"
+          onClick={onClose}
+          aria-label={t('gateScanClose')}
+          data-testid="gate-scanner-close"
+          className="grid min-h-12 min-w-12 place-items-center rounded-lg text-ee-muted hover:bg-ee-surface-raised hover:text-ee-text"
         >
-          <X className="w-6 h-6" />
+          <X className="h-6 w-6" aria-hidden="true" />
         </button>
-      </div>
+      </header>
 
-      {/* Viewfinder Viewport */}
-      <div className="flex-1 flex flex-col items-center justify-center relative my-2">
-        <div className="w-full max-w-sm rounded-3xl overflow-hidden border-2 border-amber-500 shadow-2xl relative bg-black aspect-[4/3] flex items-center justify-center">
-          <video
-            ref={videoRef}
-            playsInline
-            muted
-            className="w-full h-full object-cover"
-          />
-
-          {/* Barcode Targeting Reticle (Rectangular for MVL disc) */}
-          <div className="absolute inset-0 border-2 border-amber-400/40 m-6 rounded-2xl pointer-events-none flex flex-col items-center justify-between p-3">
-            <div className="w-full flex justify-between">
-              <div className="w-6 h-6 border-t-4 border-l-4 border-amber-400 rounded-tl-lg" />
-              <div className="w-6 h-6 border-t-4 border-r-4 border-amber-400 rounded-tr-lg" />
-            </div>
-
-            <div className="text-center px-2 py-1 rounded bg-black/60 backdrop-blur-sm">
-              <span className="text-[11px] font-bold text-amber-300 tracking-wider uppercase">
-                {isProcessing ? 'Analyzing Disc...' : 'Align Barcode in Box'}
-              </span>
-            </div>
-
-            <div className="w-full flex justify-between">
-              <div className="w-6 h-6 border-b-4 border-l-4 border-amber-400 rounded-bl-lg" />
-              <div className="w-6 h-6 border-b-4 border-r-4 border-amber-400 rounded-br-lg" />
-            </div>
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+        <div className="mx-auto w-full max-w-md">
+          <div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg border border-ee-border bg-ee-surface">
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              autoPlay
+              aria-hidden="true"
+              className={`h-full w-full object-cover ${cameraActive ? '' : 'invisible'}`}
+            />
+            {cameraActive ? (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-[8%] top-1/2 h-[38%] -translate-y-1/2 rounded-md border-2 border-ee-primary"
+              />
+            ) : (
+              <div className="absolute inset-0 grid place-items-center p-4 text-center text-ee-muted" aria-hidden="true">
+                <Camera className="h-10 w-10" />
+              </div>
+            )}
           </div>
-        </div>
 
-        {errorMsg && (
-          <div className="mt-3 p-3 rounded-xl bg-rose-950/90 border border-rose-800 text-rose-300 text-xs font-semibold text-center max-w-xs flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
-            <span>{errorMsg}</span>
-          </div>
-        )}
+          <p id={descriptionId} className="mt-3 text-base font-semibold">
+            {t('gateScanAim')}
+          </p>
+          <p className="mt-1 text-sm text-ee-muted">{t('gateScanHint')}</p>
 
-        <p className="text-xs text-slate-300 mt-3 text-center max-w-xs font-medium">
-          {t('aimDisc')}
-        </p>
-      </div>
+          <p role="status" aria-live="polite" data-testid="gate-scanner-status" className="mt-3 min-h-6 text-sm text-ee-muted">
+            {statusKey ? t(statusKey) : ''}
+          </p>
 
-      {/* Bottom Controls */}
-      <div className="flex flex-col gap-3 pb-6 z-10 max-w-sm mx-auto w-full">
-        <div className="flex items-center justify-center gap-3">
-          {hasTorch && (
-            <button
-              onClick={() => void toggleTorch()}
-              className={`p-3.5 rounded-2xl border transition-all ${
-                torchOn
-                  ? 'bg-amber-500 text-slate-950 border-amber-400'
-                  : 'bg-slate-800 text-slate-200 border-slate-700'
-              }`}
-              title="Torch"
-            >
-              <Flashlight className="w-5 h-5" />
-            </button>
+          {lowLight && camera.kind === 'scanning' && (
+            <p data-testid="gate-scanner-lowlight" className="mt-2 rounded-lg border border-ee-warning/40 bg-ee-warning/10 px-3 py-2 text-sm text-ee-warning">
+              {t('gateScanLowLight')}
+            </p>
           )}
 
-          {/* Photo File Fallback */}
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isProcessing}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold border border-slate-700 text-xs"
-          >
-            <Upload className="w-4 h-4 text-amber-400" />
-            <span>{t('photoInstead')}</span>
-          </button>
+          {camera.kind === 'error' && (
+            <p role="alert" data-testid="gate-scanner-error" className="mt-2 rounded-lg border border-ee-danger/40 bg-ee-danger/10 px-3 py-2 text-sm text-ee-danger">
+              {t(CAMERA_ERROR_KEYS[camera.reason])}
+            </p>
+          )}
 
-          {/* Manual Entry Fallback */}
-          <button
-            onClick={() => {
-              handleClose();
-              onManualEntryFallback();
-            }}
-            className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold border border-slate-700 text-xs"
-          >
-            <Edit3 className="w-4 h-4 text-emerald-400" />
-            <span>{t('enterManually')}</span>
-          </button>
+          {message && (
+            <p role="alert" data-testid="gate-scanner-message" className="mt-2 rounded-lg border border-ee-danger/40 bg-ee-danger/10 px-3 py-2 text-sm text-ee-danger">
+              {t(MESSAGE_KEYS[message])}
+            </p>
+          )}
         </div>
+      </div>
 
+      <footer className="border-t border-ee-border bg-ee-surface px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="mx-auto grid w-full max-w-md gap-2">
+          {torchSupported && camera.kind === 'scanning' && (
+            <button
+              type="button"
+              onClick={() => void toggleTorch()}
+              aria-pressed={torchOn}
+              data-testid="gate-scanner-torch"
+              className={
+                torchOn
+                  ? 'flex min-h-14 w-full items-center justify-center gap-2 rounded-lg bg-ee-primary px-4 text-base font-bold text-ee-on-primary'
+                  : secondaryButton
+              }
+            >
+              {torchOn ? <FlashlightOff className="h-5 w-5" aria-hidden="true" /> : <Flashlight className="h-5 w-5" aria-hidden="true" />}
+              <span>{torchOn ? t('gateScanTorchOff') : t('gateScanTorchOn')}</span>
+            </button>
+          )}
+          {canRetryCamera && (
+            <button type="button" onClick={retryCamera} data-testid="gate-scanner-retry-camera" className={secondaryButton}>
+              <RefreshCw className="h-5 w-5" aria-hidden="true" />
+              <span>{t('gateScanRetryCamera')}</span>
+            </button>
+          )}
+          <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+            <button
+              type="button"
+              onClick={chooseFromPhoto}
+              disabled={photoBusy}
+              data-testid="gate-scanner-photo"
+              className={secondaryButton}
+            >
+              <ImageUp className="h-5 w-5" aria-hidden="true" />
+              <span>{t('gateScanFromPhoto')}</span>
+            </button>
+            <button type="button" onClick={onManualEntry} data-testid="gate-scanner-manual" className={secondaryButton}>
+              <Keyboard className="h-5 w-5" aria-hidden="true" />
+              <span>{t('gateScanManual')}</span>
+            </button>
+          </div>
+        </div>
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*"
           capture="environment"
-          onChange={(e) => void handleFileUpload(e)}
+          onChange={(event) => void onPhotoChosen(event)}
+          data-testid="gate-scanner-file"
           className="hidden"
+          tabIndex={-1}
+          aria-hidden="true"
         />
-      </div>
+      </footer>
     </div>
   );
 }

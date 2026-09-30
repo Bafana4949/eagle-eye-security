@@ -1,9 +1,17 @@
 import React from 'react';
+import { twMerge } from 'tailwind-merge';
 
+/**
+ * Sync / connection / record state. Use the truthful words from the product rules in `label`
+ * (translated by the caller), e.g. queued = "Saved on this phone", synced = "Received by server".
+ */
 export type StatusVariant =
   | 'online'
   | 'offline'
   | 'syncing'
+  | 'synced'
+  | 'queued'
+  | 'failed'
   | 'verified'
   | 'pending'
   | 'warning'
@@ -11,79 +19,51 @@ export type StatusVariant =
   | 'active'
   | 'completed';
 
-interface StatusBadgeProps {
+type Tone = 'success' | 'warning' | 'primary' | 'danger' | 'neutral';
+
+const TONE_OF: Record<StatusVariant, Tone> = {
+  online: 'success',
+  synced: 'success',
+  verified: 'success',
+  completed: 'success',
+  offline: 'warning',
+  queued: 'warning',
+  warning: 'warning',
+  syncing: 'primary',
+  active: 'primary',
+  failed: 'danger',
+  danger: 'danger',
+  pending: 'neutral',
+};
+
+const TONE_CLASS: Record<Tone, string> = {
+  success: 'border-ee-success/50 bg-ee-success/15 text-ee-success',
+  warning: 'border-ee-warning/50 bg-ee-warning/15 text-ee-warning',
+  primary: 'border-ee-primary/50 bg-ee-primary/10 text-ee-primary',
+  danger: 'border-ee-danger/60 bg-ee-danger/15 text-ee-danger-text',
+  neutral: 'border-ee-border bg-ee-surface text-ee-muted',
+};
+
+export interface StatusBadgeProps extends Omit<React.ComponentPropsWithRef<'span'>, 'children'> {
   status: StatusVariant;
-  label?: string;
-  className?: string;
+  /** Visible, translated text. Required: the colour alone never carries the meaning. */
+  label: string;
 }
 
-export function StatusBadge({ status, label, className = '' }: StatusBadgeProps) {
-  const configs: Record<StatusVariant, { text: string; bg: string; textCol: string; dot: string }> = {
-    online: {
-      text: 'ONLINE',
-      bg: 'bg-emerald-950/60 border-emerald-700/60',
-      textCol: 'text-emerald-300',
-      dot: 'bg-emerald-400'
-    },
-    offline: {
-      text: 'OFFLINE',
-      bg: 'bg-amber-950/60 border-amber-700/60',
-      textCol: 'text-amber-300',
-      dot: 'bg-amber-400'
-    },
-    syncing: {
-      text: 'SYNCING',
-      bg: 'bg-[#212C38] border-[#F0A53A]/60',
-      textCol: 'text-[#F0A53A]',
-      dot: 'bg-[#F0A53A] animate-ping'
-    },
-    verified: {
-      text: 'VERIFIED',
-      bg: 'bg-emerald-950/60 border-emerald-700/60',
-      textCol: 'text-emerald-300',
-      dot: 'bg-emerald-400'
-    },
-    pending: {
-      text: 'PENDING',
-      bg: 'bg-slate-900 border-slate-700',
-      textCol: 'text-slate-400',
-      dot: 'bg-slate-500'
-    },
-    warning: {
-      text: 'WARNING',
-      bg: 'bg-amber-950/60 border-amber-700/60',
-      textCol: 'text-amber-300',
-      dot: 'bg-amber-400'
-    },
-    danger: {
-      text: 'CRITICAL',
-      bg: 'bg-rose-950/60 border-rose-700/60',
-      textCol: 'text-rose-300',
-      dot: 'bg-rose-400'
-    },
-    active: {
-      text: 'ACTIVE',
-      bg: 'bg-[#212C38] border-[#76C08F]/60',
-      textCol: 'text-[#76C08F]',
-      dot: 'bg-[#76C08F]'
-    },
-    completed: {
-      text: 'COMPLETED',
-      bg: 'bg-emerald-950/60 border-emerald-700/60',
-      textCol: 'text-emerald-300',
-      dot: 'bg-emerald-400'
-    }
-  };
-
-  const config = configs[status] || configs.pending;
-  const displayText = label || config.text;
-
+export function StatusBadge({ status, label, className, ...props }: StatusBadgeProps) {
+  const tone = TONE_OF[status] ?? 'neutral';
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold tracking-wider uppercase border shadow-sm ${config.bg} ${config.textCol} ${className}`}
+      data-status={status}
+      className={twMerge(
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold uppercase leading-5 tracking-wide',
+        TONE_CLASS[tone],
+        className
+      )}
+      {...props}
     >
-      <span className={`w-2 h-2 rounded-full ${config.dot}`} />
-      <span>{displayText}</span>
+      <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-current" />
+      <span>{label}</span>
     </span>
   );
 }

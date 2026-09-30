@@ -14,7 +14,19 @@ export interface PatrolAlarmState {
 
 let audioCtx: AudioContext | null = null;
 let activeWakeLock: WakeLockSentinel | null = null;
-let lastBeepTimestamp = 0;
+// Separate throttles so a 'late' beep never suppresses a 'soon' beep (and vice versa).
+const lastBeepTimestamp: Record<PatrolAlarmState['type'], number> = { late: 0, soon: 0 };
+
+/** Minimum time between repeated beeps of the same alarm type (reference app values). */
+export const BEEP_REPEAT_MS: Readonly<Record<PatrolAlarmState['type'], number>> = { late: 120000, soon: 600000 };
+/** How often the guard UI should re-evaluate the alarm (reference: every 20 s). */
+export const ALARM_CHECK_INTERVAL_MS = 20000;
+/** 'late' alarm fires when no scan for one round interval plus this grace. */
+export const LATE_GRACE_MS = 10 * 60000;
+/** 'soon' alarm fires when this much (or less) of the current round remains with open points. */
+export const SOON_WINDOW_MS = 10 * 60000;
+/** Acknowledging a 'late' alarm silences it for this long. */
+export const LATE_ACK_SNOOZE_MS = 5 * 60000;
 
 /**
  * Unlocks the Web Audio API on user interaction (tap/click/key)
@@ -36,16 +48,18 @@ export function unlockAudioContext(): void {
 }
 
 /**
- * Triggers an 880Hz pulsed square-wave alert beep and vibration pattern
+ * Triggers an 880Hz pulsed square-wave alert beep and vibration pattern.
+ * Repeats of the same type are throttled (120 s late / 600 s soon) to save battery;
+ * pass force=true for a manual test tone (device-test page).
+ * Returns false when the beep was throttled.
  */
-export function triggerAlarmBeep(isLate = false): void {
+export function triggerAlarmBeep(isLate = false, force = false): boolean {
   const now = Date.now();
-  // Minimum 120s between 'late' beeps, 600s between 'soon' beeps to avoid battery drain
-  const minInterval = isLate ? 120000 : 600000;
-  if (now - lastBeepTimestamp < minInterval) {
-    return;
+  const type: PatrolAlarmState['type'] = isLate ? 'late' : 'soon';
+  if (!force && now - lastBeepTimestamp[type] < BEEP_REPEAT_MS[type]) {
+    return false;
   }
-  lastBeepTimestamp = now;
+  if (!force) lastBeepTimestamp[type] = now;
 
   // 1. Tactile vibration
   if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -56,20 +70,37 @@ export function triggerAlarmBeep(isLate = false): void {
     }
   }
 
-  // 2. Audible Synthesizer Beep
+  // 2. Audible Synthesizer Beep (needs a prior user gesture to unlock audio on mobile)
   unlockAudioContext();
-  if (!audioCtx || audioCtx.state !== 'running') return;
+  const ctx = audioCtx;
+  if (!ctx) return true;
+  if (ctx.state === 'running') {
+    playAlertTone(ctx);
+  } else {
+    // resume() is asynchronous: a context suspended while the page was in the background
+    // (or 'interrupted' on iOS) would otherwise skip this beep and the throttle would hide the
+    // next one for minutes. Play once it is running; without a prior gesture it stays silent.
+    ctx
+      .resume()
+      .then(() => {
+        if (ctx.state === 'running') playAlertTone(ctx);
+      })
+      .catch(() => undefined);
+  }
+  return true;
+}
 
+function playAlertTone(ctx: AudioContext): void {
   try {
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
 
     osc.type = 'square';
     osc.frequency.value = 880; // 880 Hz standard alert tone
     osc.connect(gain);
-    gain.connect(audioCtx.destination);
+    gain.connect(ctx.destination);
 
-    const t0 = audioCtx.currentTime;
+    const t0 = ctx.currentTime;
     gain.gain.setValueAtTime(0, t0);
 
     // 3 short burst pulses: 0s, 0.4s, 0.8s
@@ -86,7 +117,8 @@ export function triggerAlarmBeep(isLate = false): void {
 }
 
 /**
- * Screen Wake Lock: Keeps the guard phone screen awake while on duty
+ * Screen Wake Lock: one-off request (device-test page). The browser drops the lock whenever the
+ * page is hidden; for a shift use keepScreenAwake() / useKeepScreenAwake(), which re-acquire it.
  */
 export async function requestScreenWakeLock(): Promise<boolean> {
   if (typeof navigator === 'undefined' || !('wakeLock' in navigator)) {
@@ -115,7 +147,11 @@ export function releaseScreenWakeLock(): void {
 }
 
 /**
- * Determines whether a round is overdue or about to expire with unvisited checkpoints
+ * Determines whether a round is overdue or about to expire with unvisited checkpoints.
+ * Rounds are aligned to shiftStartMs (the active shift's SCHEDULED start) and use the site's
+ * round interval; pass only the active site checkpoints and this shift's scans.
+ * Throws RangeError for a non-positive interval (a misconfigured site must not silently
+ * disable the alarm).
  */
 export function evaluatePatrolAlarm(
   nowMs: number,
@@ -125,6 +161,9 @@ export function evaluatePatrolAlarm(
   checkpointIds: string[],
   scanLog: Array<{ checkpointId: string; timestampMs: number }>
 ): PatrolAlarmState | null {
+  if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
+    throw new RangeError(`Invalid round interval: ${intervalMinutes} minutes`);
+  }
   if (nowMs < shiftStartMs || nowMs >= shiftEndMs || checkpointIds.length === 0) {
     return null;
   }
@@ -138,7 +177,7 @@ export function evaluatePatrolAlarm(
   const lastScanMs = scansInShift.length > 0 ? Math.max(...scansInShift.map((s) => s.timestampMs)) : shiftStartMs;
 
   // 1. OVERDUE ALERT: No scan for interval + 10 minutes grace period
-  if (nowMs - lastScanMs > ivMs + 10 * 60000) {
+  if (nowMs - lastScanMs > ivMs + LATE_GRACE_MS) {
     return {
       type: 'late',
       sinceMs: nowMs - lastScanMs,
@@ -148,7 +187,7 @@ export function evaluatePatrolAlarm(
 
   // 2. EXPIRING SOON ALERT: <= 10 minutes remaining in current round with unvisited checkpoints
   const remainingMs = roundEndMs - nowMs;
-  if (remainingMs > 0 && remainingMs <= 10 * 60000) {
+  if (remainingMs > 0 && remainingMs <= SOON_WINDOW_MS) {
     const visitedInRound = new Set(
       scanLog
         .filter((s) => s.timestampMs >= roundStartMs && s.timestampMs < roundEndMs)
@@ -167,4 +206,24 @@ export function evaluatePatrolAlarm(
   }
 
   return null;
+}
+
+export interface AlarmAckState {
+  /** roundKey of the 'soon' alarm the guard acknowledged. */
+  soonAckRoundKey?: number | null;
+  /** 'late' alarm silenced until this epoch ms. */
+  lateSnoozedUntilMs?: number | null;
+}
+
+/** Whether an evaluated alarm should be shown, given the guard's acknowledgements (reference rules). */
+export function isAlarmVisible(alarm: PatrolAlarmState | null, ack: AlarmAckState, nowMs: number): boolean {
+  if (!alarm) return false;
+  if (alarm.type === 'soon') return alarm.roundKey === undefined || alarm.roundKey !== ack.soonAckRoundKey;
+  return !(ack.lateSnoozedUntilMs != null && nowMs < ack.lateSnoozedUntilMs);
+}
+
+/** New acknowledgement state after the guard taps "acknowledge". */
+export function acknowledgeAlarm(alarm: PatrolAlarmState, ack: AlarmAckState, nowMs: number): AlarmAckState {
+  if (alarm.type === 'soon') return { ...ack, soonAckRoundKey: alarm.roundKey ?? null };
+  return { ...ack, lateSnoozedUntilMs: nowMs + LATE_ACK_SNOOZE_MS };
 }

@@ -1,562 +1,360 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { 
-  ArrowLeft, 
-  Camera, 
-  Navigation, 
-  QrCode, 
-  Radio, 
-  Database, 
-  Wifi, 
-  Volume2, 
-  Sun, 
-  CheckCircle2, 
-  XCircle, 
-  AlertTriangle, 
-  RefreshCw,
-  Smartphone,
-  Info,
-  LogOut
-} from 'lucide-react';
-import { Card, CardHeader, CardTitle } from '@/components/ui/card';
+/**
+ * Device diagnostics for admins / technicians. Shows only what this browser actually reports:
+ * Web NFC (with a live tag read), camera, GPS, PDF417 barcode support, offline storage, service
+ * worker, installed mode and connectivity. Nothing is saved to the database; the only server
+ * access is a read-only lookup of which checkpoint a tested tag is registered to.
+ */
+import React, { useEffect, useState, useSyncExternalStore } from 'react';
+import { Camera, Navigation, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { useAuth } from '@/context/AuthContext';
-import { triggerAlarmBeep, requestScreenWakeLock, releaseScreenWakeLock } from '@/lib/patrol/alarm';
+import { useTranslation } from '@/lib/i18n/context';
+import type { TranslationKey } from '@/lib/i18n/translations';
+import { getLocationFix, type LocationFixResult } from '@/lib/gps/location';
 import { isNativePdf417Supported } from '@/lib/license-disc/scanner';
+import { checkDeviceStorage, offlineDB } from '@/lib/offline/db';
+import { releaseScreenWakeLock, requestScreenWakeLock, triggerAlarmBeep, unlockAudioContext } from '@/lib/patrol/alarm';
+import type { DeviceStorageStatus } from '@/types/offline';
+import type { Site } from '@/types/models';
+import { AdminFooter, AdminHeader } from '@/components/admin/AdminHeader';
+import { DeviceNfcTest } from '@/components/admin/DeviceNfcTest';
+import { loadOrgSites } from '@/components/admin/adminData';
+import { withDb } from '@/components/admin/withDb';
+import { formatSastDateTime } from '@/components/admin/format';
+import { GPS_ACCEPTABLE_ACCURACY_M } from '@/components/admin/validation';
+import { Notice } from '@/components/admin/ui';
 
-interface DiagnosticStatus {
-  status: 'supported' | 'unsupported' | 'pending' | 'denied';
-  details: string;
+type Tone = 'success' | 'warning' | 'danger' | 'muted';
+
+const TONE_TEXT: Record<Tone, string> = {
+  success: 'text-ee-success',
+  warning: 'text-ee-warning',
+  danger: 'text-ee-danger-text',
+  muted: 'text-ee-muted'
+};
+
+function CheckRow({ label, value, tone, testId }: { label: string; value: string; tone: Tone; testId: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      <dt className="text-sm text-ee-muted">{label}</dt>
+      <dd className={`text-sm font-semibold break-words sm:text-right ${TONE_TEXT[tone]}`} data-testid={testId}>
+        {value}
+      </dd>
+    </div>
+  );
 }
 
-interface NdefReadRecord {
-  recordType?: string;
-  mediaType?: string;
-  data?: unknown;
-}
-
-interface NdefReadingEvent {
-  serialNumber?: string;
-  message?: {
-    records?: NdefReadRecord[];
+function subscribeOnline(callback: () => void): () => void {
+  window.addEventListener('online', callback);
+  window.addEventListener('offline', callback);
+  return () => {
+    window.removeEventListener('online', callback);
+    window.removeEventListener('offline', callback);
   };
 }
 
-interface WebNdefReader {
-  scan: () => Promise<void>;
-  onreading: (event: NdefReadingEvent) => void;
-  onreadingerror: (error: unknown) => void;
+function formatBytes(bytes: number | null): string {
+  if (bytes === null) return '?';
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-export default function DeviceHardwareTestPage() {
-  const router = useRouter();
-  const { user, roles, isLoading, signOut } = useAuth();
+type ServiceWorkerInfo = { kind: 'unsupported' } | { kind: 'none' } | { kind: 'registered'; scope: string; state: string; controlling: boolean } | { kind: 'error'; message: string };
+type IdbInfo = { kind: 'unsupported' } | { kind: 'ok' } | { kind: 'error'; message: string };
 
-  // Strict role security: Guards are blocked from hardware diagnostic admin tool
+type CameraResult =
+  | { kind: 'ok'; label: string; width?: number; height?: number; facing?: string; cameras: number }
+  | { kind: 'error'; name: string; message: string }
+  | { kind: 'unsupported' };
+
+const CAMERA_ERROR_KEYS: Record<string, TranslationKey> = {
+  NotAllowedError: 'devCameraDenied',
+  SecurityError: 'devCameraDenied',
+  NotFoundError: 'devCameraNotFound',
+  OverconstrainedError: 'devCameraNotFound',
+  NotReadableError: 'devCameraBusy',
+  AbortError: 'devCameraBusy'
+};
+
+const GPS_FAILURE_KEYS: Record<string, TranslationKey> = {
+  permission_denied: 'admGpsDenied',
+  timeout: 'admGpsTimeout',
+  unavailable: 'admGpsUnavailable',
+  unsupported: 'admGpsUnsupported',
+  insecure: 'admGpsInsecure'
+};
+
+export default function DeviceTestPage() {
+  const { t, language } = useTranslation();
+  const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
+  const [secure] = useState(() => (typeof window !== 'undefined' ? window.isSecureContext === true : false));
+  const [standalone] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const iosStandalone = (navigator as Navigator & { standalone?: boolean }).standalone === true;
+    return iosStandalone || (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches);
+  });
+  const [cameraApi] = useState(() => typeof navigator !== 'undefined' && typeof navigator.mediaDevices?.getUserMedia === 'function');
+  const [sites, setSites] = useState<Site[]>([]);
+  const [pdf417, setPdf417] = useState<boolean | null>(null);
+  const [sw, setSw] = useState<ServiceWorkerInfo | null>(null);
+  const [idb, setIdb] = useState<IdbInfo | null>(null);
+  const [storage, setStorage] = useState<DeviceStorageStatus | null>(null);
+  const [camera, setCamera] = useState<CameraResult | null>(null);
+  const [cameraBusy, setCameraBusy] = useState(false);
+  const [gps, setGps] = useState<LocationFixResult | null>(null);
+  const [gpsBusy, setGpsBusy] = useState(false);
+  const [toneStarted, setToneStarted] = useState<boolean | null>(null);
+  const [wakeLock, setWakeLock] = useState<boolean | null>(null);
+
   useEffect(() => {
-    if (isLoading) return;
-    const isGuardMode = typeof window !== 'undefined' && !!localStorage.getItem('eagle_eye_selected_guard');
-    const hasAdminOrSupervisorRole = roles.some((r) => ['admin', 'super_admin', 'supervisor'].includes(r));
-
-    if (isGuardMode || (user && !hasAdminOrSupervisorRole)) {
-      router.replace('/guard');
-    } else if (!user && !hasAdminOrSupervisorRole) {
-      router.replace('/login');
-    }
-  }, [isLoading, roles, user, router]);
-
-  const [cameraStatus, setCameraStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
-  const [gpsStatus, setGpsStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
-  const [nfcStatus, setNfcStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
-  const [idbStatus, setIdbStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
-  const [swStatus, setSwStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
-  const [pwaStatus, setPwaStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
-  const [pdf417Status, setPdf417Status] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
-  const [networkStatus, setNetworkStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
-
-  // Interactive Test State
-  const [testedNfcTag, setTestedNfcTag] = useState<{ serial?: string; records?: string; error?: string } | null>(null);
-  const [isNfcTesting, setIsNfcTesting] = useState(false);
-  const [wakeLockActive, setWakeLockActive] = useState(false);
-  const [audioPlayed, setAudioPlayed] = useState(false);
-
-  const runDiagnostics = useCallback(async () => {
-    // 1. Camera check
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        stream.getTracks().forEach((t) => t.stop());
-        setCameraStatus({ status: 'supported', details: 'Camera hardware active & permission granted' });
-      } catch (err: unknown) {
-        const error = err as Error;
-        if (error.name === 'NotAllowedError') {
-          setCameraStatus({ status: 'denied', details: 'Camera permission denied by browser or user' });
-        } else {
-          setCameraStatus({ status: 'unsupported', details: `Camera unavailable: ${error.message}` });
-        }
-      }
-    } else {
-      setCameraStatus({ status: 'unsupported', details: 'navigator.mediaDevices.getUserMedia not supported' });
-    }
-
-    // 2. GPS Check
-    if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setGpsStatus({
-            status: 'supported',
-            details: `GPS Fix acquired: ±${Math.round(pos.coords.accuracy)}m (${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)})`
-          });
-        },
-        (err) => {
-          setGpsStatus({
-            status: err.code === 1 ? 'denied' : 'unsupported',
-            details: `GPS error (${err.code}): ${err.message}`
-          });
-        },
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-      );
-    } else {
-      setGpsStatus({ status: 'unsupported', details: 'navigator.geolocation not supported' });
-    }
-
-    // 3. Web NFC Check
-    if (typeof window !== 'undefined') {
-      const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-      const isHttps = window.location.protocol === 'https:' || window.location.hostname === 'localhost';
-
-      if (isIOS) {
-        setNfcStatus({
-          status: 'unsupported',
-          details: 'iOS Safari does not support the Web NFC API. Use checkpoint QR codes on iPhones.'
-        });
-      } else if (!isHttps) {
-        setNfcStatus({
-          status: 'unsupported',
-          details: 'Web NFC requires a secure HTTPS context. Serve over https://.'
-        });
-      } else if ('NDEFReader' in window) {
-        setNfcStatus({
-          status: 'supported',
-          details: 'Web NFC API is available in this browser (compatible with 13.56MHz NDEF tags).'
-        });
-      } else {
-        setNfcStatus({
-          status: 'unsupported',
-          details: 'Web NFC not supported in this browser. Use Google Chrome on Android.'
-        });
-      }
-    }
-
-    // 4. IndexedDB Check
-    if (typeof window !== 'undefined' && 'indexedDB' in window) {
-      setIdbStatus({ status: 'supported', details: 'IndexedDB persistent client database available' });
-    } else {
-      setIdbStatus({ status: 'unsupported', details: 'IndexedDB is unavailable' });
-    }
-
-    // 5. Service Worker Check
-    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      if (registrations.length > 0) {
-        setSwStatus({ status: 'supported', details: `Service Worker registered (${registrations[0].scope})` });
-      } else {
-        setSwStatus({ status: 'pending', details: 'Service Worker API supported; registering on reload' });
-      }
-    } else {
-      setSwStatus({ status: 'unsupported', details: 'Service Workers not supported' });
-    }
-
-    // 6. PWA Mode
-    if (typeof window !== 'undefined') {
-      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || ('standalone' in navigator && (navigator as unknown as { standalone: boolean }).standalone);
-      setPwaStatus({
-        status: 'supported',
-        details: isStandalone ? 'App is installed and running in Standalone PWA mode' : 'App is running in web browser tab (installable)'
-      });
-    }
-
-    // 7. Native PDF417 Support
-    const nativePdf417 = await isNativePdf417Supported();
-    setPdf417Status({
-      status: 'supported',
-      details: nativePdf417 
-        ? 'Hardware-accelerated BarcodeDetector (PDF417) active' 
-        : 'ZXing MultiFormatReader (PDF417) software fallback active'
+    let cancelled = false;
+    void isNativePdf417Supported().then((value) => {
+      if (!cancelled) setPdf417(value);
     });
-
-    // 8. Online Connectivity
-    setNetworkStatus({
-      status: navigator.onLine ? 'supported' : 'unsupported',
-      details: navigator.onLine ? 'Internet connectivity active' : 'Device is offline'
+    void checkDeviceStorage().then((value) => {
+      if (!cancelled) setStorage(value);
     });
+    const swPromise: Promise<ServiceWorkerInfo> =
+      typeof navigator !== 'undefined' && 'serviceWorker' in navigator
+        ? navigator.serviceWorker.getRegistration().then(
+            (registration): ServiceWorkerInfo =>
+              registration
+                ? {
+                    kind: 'registered',
+                    scope: registration.scope,
+                    state: registration.active?.state ?? registration.waiting?.state ?? registration.installing?.state ?? 'unknown',
+                    controlling: navigator.serviceWorker.controller !== null
+                  }
+                : { kind: 'none' },
+            (error: unknown): ServiceWorkerInfo => ({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
+          )
+        : Promise.resolve({ kind: 'unsupported' });
+    void swPromise.then((value) => {
+      if (!cancelled) setSw(value);
+    });
+    const idbPromise: Promise<IdbInfo> =
+      typeof indexedDB === 'undefined' || !offlineDB
+        ? Promise.resolve({ kind: 'unsupported' })
+        : offlineDB.open().then(
+            (): IdbInfo => ({ kind: 'ok' }),
+            (error: unknown): IdbInfo => ({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
+          );
+    void idbPromise.then((value) => {
+      if (!cancelled) setIdb(value);
+    });
+    void withDb((db) => loadOrgSites(db)).then((result) => {
+      if (!cancelled && result.ok) setSites(result.value);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  useEffect(() => {
-    let isMounted = true;
-    const timer = setTimeout(() => {
-      if (isMounted) {
-        void runDiagnostics();
-      }
-    }, 0);
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-    };
-  }, [runDiagnostics]);
-
-  const handleTestNfcTag = async () => {
-    if (typeof window === 'undefined' || !('NDEFReader' in window)) {
-      setTestedNfcTag({ error: 'Web NFC is not supported on this device or browser.' });
+  const testCamera = async () => {
+    if (!cameraApi) {
+      setCamera({ kind: 'unsupported' });
       return;
     }
-
-    setIsNfcTesting(true);
-    setTestedNfcTag(null);
-
+    setCameraBusy(true);
     try {
-      const NDEFReaderClass = (window as unknown as { NDEFReader: new () => WebNdefReader }).NDEFReader;
-      const reader = new NDEFReaderClass();
-      await reader.scan();
-
-      reader.onreading = (event: NdefReadingEvent) => {
-        setIsNfcTesting(false);
-        const serial = event.serialNumber || 'N/A';
-        const records = event.message?.records?.map((r) => r.recordType || 'record').join(', ') || 'Empty NDEF payload';
-        setTestedNfcTag({ serial, records });
-        if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          navigator.vibrate(200);
-        }
-      };
-
-      reader.onreadingerror = () => {
-        setIsNfcTesting(false);
-        setTestedNfcTag({
-          error: 'This physical RFID technology cannot be read directly by the web browser. Use a compatible 13.56 MHz NFC/NDEF checkpoint tag, QR fallback, or supported external reader.'
-        });
-      };
-    } catch (err: unknown) {
-      setIsNfcTesting(false);
-      const error = err as Error;
-      setTestedNfcTag({ error: `NFC scan could not start: ${error.message}` });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      const track = stream.getVideoTracks()[0];
+      const settings = track?.getSettings?.() ?? {};
+      stream.getTracks().forEach((tr) => tr.stop());
+      let cameras = 0;
+      try {
+        cameras = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput').length;
+      } catch {
+        cameras = 0;
+      }
+      setCamera({ kind: 'ok', label: track?.label ?? '', width: settings.width, height: settings.height, facing: settings.facingMode, cameras });
+    } catch (error) {
+      const name = error && typeof error === 'object' && 'name' in error ? String((error as { name: unknown }).name) : 'Error';
+      setCamera({ kind: 'error', name, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setCameraBusy(false);
     }
   };
 
-  const handleTestAudio = () => {
-    triggerAlarmBeep(true);
-    setAudioPlayed(true);
+  const testGps = async () => {
+    setGpsBusy(true);
+    setGps(await getLocationFix({ maxAgeMs: 0, timeoutMs: 20000, highAccuracy: true, coarseRetry: true, watch: null }));
+    setGpsBusy(false);
   };
 
-  const handleToggleWakeLock = async () => {
-    if (wakeLockActive) {
+  const playTone = () => {
+    unlockAudioContext();
+    setToneStarted(triggerAlarmBeep(true, true));
+  };
+
+  const toggleWakeLock = async () => {
+    if (wakeLock) {
       releaseScreenWakeLock();
-      setWakeLockActive(false);
-    } else {
-      const success = await requestScreenWakeLock();
-      setWakeLockActive(success);
+      setWakeLock(false);
+      return;
     }
+    setWakeLock(await requestScreenWakeLock());
   };
 
-  const renderBadge = (status: DiagnosticStatus['status']) => {
-    switch (status) {
-      case 'supported':
-        return (
-          <Badge variant="success" className="gap-1">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Passed</span>
-          </Badge>
-        );
-      case 'denied':
-        return (
-          <Badge variant="danger" className="gap-1">
-            <XCircle className="w-3.5 h-3.5" />
-            <span>Permission Denied</span>
-          </Badge>
-        );
-      case 'unsupported':
-        return (
-          <Badge variant="warning" className="gap-1">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            <span>Unsupported / Fallback</span>
-          </Badge>
-        );
-      default:
-        return (
-          <Badge variant="neutral" className="gap-1">
-            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            <span>Checking</span>
-          </Badge>
-        );
-    }
-  };
+  const yesNo = (value: boolean) => (value ? t('devYes') : t('devNo'));
 
   return (
-    <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col font-sans pb-12">
-      {/* Top Header */}
-      <header className="sticky top-0 z-30 bg-[#18212B]/95 backdrop-blur-md border-b border-[#324050] px-4 py-3">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/admin" className="p-2 rounded-xl bg-[#212C38] border border-[#324050] text-[#9AA5B1] hover:text-[#E9E4D8]">
-              <ArrowLeft className="w-5 h-5" />
-            </Link>
-            <div>
-              <h1 className="text-lg font-bold text-[#E9E4D8] tracking-tight flex items-center gap-2">
-                <span>Device & Hardware Diagnostic Test</span>
-              </h1>
-              <p className="text-xs text-[#9AA5B1]">Validate smartphone sensors, cameras, NFC & storage</p>
-            </div>
-          </div>
+    <>
+      <AdminHeader title={t('devTitle')} />
+      <main className="mx-auto w-full max-w-3xl space-y-6 px-4 py-4 pb-16">
+        <p className="text-sm text-ee-muted">{t('devIntro')}</p>
 
-          <div className="flex items-center gap-2">
-            <Button onClick={() => void runDiagnostics()} variant="secondary" size="sm" className="gap-1.5 text-xs">
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Re-test</span>
-            </Button>
+        <section aria-labelledby="dev-nfc-heading" className="space-y-2">
+          <h2 id="dev-nfc-heading" className="font-display text-2xl font-bold">
+            {t('devNfcTitle')}
+          </h2>
+          <DeviceNfcTest sites={sites} />
+        </section>
 
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={async () => {
-                await signOut();
-                router.push('/login');
-              }}
-              className="text-xs text-[#E0685C] hover:text-white hover:bg-[#B3261E] hover:border-[#B3261E] gap-1 font-semibold"
-              title="Log Out of Eagle Eye"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Log Out</span>
-            </Button>
-          </div>
-        </div>
-      </header>
+        <section aria-labelledby="dev-checks-heading">
+          <h2 id="dev-checks-heading" className="font-display text-2xl font-bold">
+            {t('devChecksTitle')}
+          </h2>
+          <dl className="divide-y divide-ee-border border-y border-ee-border">
+            <CheckRow label={t('devSecure')} value={yesNo(secure)} tone={secure ? 'success' : 'danger'} testId="admin-device-secure" />
+            <CheckRow label={t('devOnline')} value={online ? t('devOnlineYes') : t('devOnlineNo')} tone={online ? 'success' : 'warning'} testId="admin-device-online" />
+            <CheckRow label={t('devStandalone')} value={standalone ? t('devStandaloneYes') : t('devStandaloneNo')} tone={standalone ? 'success' : 'warning'} testId="admin-device-standalone" />
+            <CheckRow
+              label={t('devServiceWorker')}
+              value={
+                !sw
+                  ? t('devChecking')
+                  : sw.kind === 'registered'
+                    ? t('devSwRegistered', sw.state, sw.controlling ? t('devYes') : t('devNo'))
+                    : sw.kind === 'none'
+                      ? t('devSwNone')
+                      : sw.kind === 'unsupported'
+                        ? t('devNotSupported')
+                        : `${t('devError')}: ${sw.message}`
+              }
+              tone={!sw ? 'muted' : sw.kind === 'registered' ? 'success' : sw.kind === 'none' ? 'warning' : 'danger'}
+              testId="admin-device-service-worker"
+            />
+            <CheckRow
+              label={t('devIndexedDb')}
+              value={!idb ? t('devChecking') : idb.kind === 'ok' ? t('devIdbOk') : idb.kind === 'unsupported' ? t('devNotSupported') : `${t('devError')}: ${idb.message}`}
+              tone={!idb ? 'muted' : idb.kind === 'ok' ? 'success' : 'danger'}
+              testId="admin-device-indexeddb"
+            />
+            <CheckRow
+              label={t('devPersistentStorage')}
+              value={!storage ? t('devChecking') : storage.persisted === true ? t('devYes') : storage.persisted === false ? t('devPersistNo') : t('devUnknown')}
+              tone={!storage ? 'muted' : storage.persisted === true ? 'success' : 'warning'}
+              testId="admin-device-storage-persisted"
+            />
+            <CheckRow
+              label={t('devStorageUse')}
+              value={!storage ? t('devChecking') : storage.usageBytes === null && storage.quotaBytes === null ? t('devUnknown') : t('devStorageUseValue', formatBytes(storage.usageBytes), formatBytes(storage.quotaBytes))}
+              tone={!storage ? 'muted' : storage.nearlyFull ? 'danger' : 'muted'}
+              testId="admin-device-storage-usage"
+            />
+            <CheckRow
+              label={t('devPdf417')}
+              value={pdf417 === null ? t('devChecking') : pdf417 ? t('devPdf417Native') : t('devPdf417Software')}
+              tone={pdf417 === null ? 'muted' : pdf417 ? 'success' : 'warning'}
+              testId="admin-device-pdf417"
+            />
+            <CheckRow label={t('devCameraApi')} value={yesNo(cameraApi)} tone={cameraApi ? 'success' : 'danger'} testId="admin-device-camera-api" />
+          </dl>
+        </section>
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-4xl mx-auto w-full p-4 space-y-6">
-        {/* Hardware Capability Matrix */}
-        <Card className="bg-[#212C38] border-[#324050] rounded-2xl">
-          <CardHeader className="border-b border-[#324050]">
-            <CardTitle className="text-base text-[#E9E4D8] flex items-center gap-2">
-              <Smartphone className="w-5 h-5 text-[#F0A53A]" />
-              <span>Core Mobile Hardware Sensors</span>
-            </CardTitle>
-          </CardHeader>
-
-          <div className="divide-y divide-slate-800 mt-2">
-            {/* Camera */}
-            <div className="py-3 flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-[#F0A53A]">
-                  <Camera className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-bold text-sm text-white">Rear Camera (Video / QR / Photo)</div>
-                  <div className="text-xs text-slate-400 mt-0.5">{cameraStatus.details}</div>
-                </div>
-              </div>
-              {renderBadge(cameraStatus.status)}
-            </div>
-
-            {/* GPS */}
-            <div className="py-3 flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-emerald-400">
-                  <Navigation className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-bold text-sm text-white">GPS Geolocation Engine</div>
-                  <div className="text-xs text-slate-400 mt-0.5">{gpsStatus.details}</div>
-                </div>
-              </div>
-              {renderBadge(gpsStatus.status)}
-            </div>
-
-            {/* Web NFC */}
-            <div className="py-3 flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-[#F0A53A]">
-                  <Radio className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-bold text-sm text-white">Web NFC Reader (13.56 MHz NDEF)</div>
-                  <div className="text-xs text-slate-400 mt-0.5">{nfcStatus.details}</div>
-                </div>
-              </div>
-              {renderBadge(nfcStatus.status)}
-            </div>
-
-            {/* PDF417 SA Licence Disc Engine */}
-            <div className="py-3 flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-amber-400">
-                  <QrCode className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-bold text-sm text-white">South African Vehicle Disc Decoder (PDF417)</div>
-                  <div className="text-xs text-slate-400 mt-0.5">{pdf417Status.details}</div>
-                </div>
-              </div>
-              {renderBadge(pdf417Status.status)}
-            </div>
-
-            {/* IndexedDB */}
-            <div className="py-3 flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-[#F0A53A]">
-                  <Database className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-bold text-sm text-white">Offline Storage (IndexedDB / Dexie)</div>
-                  <div className="text-xs text-slate-400 mt-0.5">{idbStatus.details}</div>
-                </div>
-              </div>
-              {renderBadge(idbStatus.status)}
-            </div>
-
-            {/* Service Worker */}
-            <div className="py-3 flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-[#F0A53A]">
-                  <RefreshCw className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-bold text-sm text-white">Service Worker & Offline Cache</div>
-                  <div className="text-xs text-slate-400 mt-0.5">{swStatus.details}</div>
-                </div>
-              </div>
-              {renderBadge(swStatus.status)}
-            </div>
-
-            {/* Connectivity */}
-            <div className="py-3 flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-emerald-400">
-                  <Wifi className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-bold text-sm text-white">Network Connectivity</div>
-                  <div className="text-xs text-slate-400 mt-0.5">{networkStatus.details}</div>
-                </div>
-              </div>
-              {renderBadge(networkStatus.status)}
-            </div>
-
-            {/* PWA Mode */}
-            <div className="py-3 flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-slate-800 text-rose-400">
-                  <Smartphone className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="font-bold text-sm text-white">PWA Installation Status</div>
-                  <div className="text-xs text-slate-400 mt-0.5">{pwaStatus.details}</div>
-                </div>
-              </div>
-              {renderBadge(pwaStatus.status)}
-            </div>
-          </div>
-        </Card>
-
-        {/* Interactive Hardware Diagnostics */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Interactive NFC Tag Test */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Radio className="w-5 h-5 text-[#F0A53A]" />
-                <span>Interactive Physical Tag Test</span>
-              </CardTitle>
-            </CardHeader>
-
-            <p className="text-xs text-slate-400">
-              Hold a physical checkpoint tag against the back of your phone to test if your phone&apos;s Web NFC antenna can read it.
-            </p>
-
-            <div className="mt-4">
-              <Button
-                onClick={() => void handleTestNfcTag()}
-                disabled={isNfcTesting}
-                variant="primary"
-                size="md"
-                className="w-full gap-2"
-              >
-                <Radio className={`w-4 h-4 ${isNfcTesting ? 'animate-pulse text-emerald-400' : ''}`} />
-                <span>{isNfcTesting ? 'Scanning... Hold Tag to Phone' : 'Test Physical Tag'}</span>
-              </Button>
-            </div>
-
-            {testedNfcTag?.serial && (
-              <div className="mt-4 p-3 rounded-xl bg-emerald-950/80 border border-emerald-800 text-xs">
-                <div className="font-bold text-emerald-300">✓ Tag Read Successfully!</div>
-                <div className="text-slate-300 mt-1 font-mono">Serial: {testedNfcTag.serial}</div>
-                <div className="text-slate-400 mt-0.5">Payload: {testedNfcTag.records}</div>
-              </div>
+        <section aria-labelledby="dev-camera-heading" className="space-y-2">
+          <h2 id="dev-camera-heading" className="font-display text-2xl font-bold">
+            {t('devCameraTitle')}
+          </h2>
+          <Button type="button" variant="secondary" className="min-h-12 w-full gap-2 sm:w-auto" onClick={() => void testCamera()} disabled={cameraBusy} data-testid="admin-device-camera-test">
+            <Camera className="h-4 w-4" aria-hidden />
+            <span>{cameraBusy ? t('devTesting') : t('devCameraTest')}</span>
+          </Button>
+          <div aria-live="polite" data-testid="admin-device-camera-result">
+            {camera?.kind === 'ok' && (
+              <Notice tone="success" title={t('devCameraOk')}>
+                <p>{t('devCameraDetails', camera.label || t('devUnknown'), camera.width && camera.height ? `${camera.width}×${camera.height}` : t('devUnknown'), camera.facing ?? t('devUnknown'), camera.cameras)}</p>
+              </Notice>
             )}
-
-            {testedNfcTag?.error && (
-              <div className="mt-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-xs text-rose-300">
-                <div className="font-bold flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 text-rose-400" />
-                  <span>Tag Incompatible with Browser</span>
-                </div>
-                <p className="mt-1 leading-relaxed">{testedNfcTag.error}</p>
-              </div>
+            {camera?.kind === 'error' && (
+              <Notice tone="danger" title={t(CAMERA_ERROR_KEYS[camera.name] ?? 'devCameraFailed')}>
+                <p className="text-xs text-ee-muted break-words">
+                  {camera.name}: {camera.message}
+                </p>
+                <p>{t('devCameraFallback')}</p>
+              </Notice>
             )}
-          </Card>
-
-          {/* Audio & Screen Wake Lock Test */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Volume2 className="w-5 h-5 text-amber-400" />
-                <span>Audio Synthesizer & Wake Lock</span>
-              </CardTitle>
-            </CardHeader>
-
-            <p className="text-xs text-slate-400">
-              Test the 880Hz audible alert tone and screen keep-awake sentinel used during night guard patrols.
-            </p>
-
-            <div className="space-y-3 mt-4">
-              <Button
-                onClick={handleTestAudio}
-                variant="secondary"
-                size="md"
-                className="w-full gap-2"
-              >
-                <Volume2 className="w-4 h-4 text-amber-400" />
-                <span>{audioPlayed ? 'Play Tone Again (880Hz)' : 'Test Alarm Tone & Vibration'}</span>
-              </Button>
-
-              <Button
-                onClick={() => void handleToggleWakeLock()}
-                variant={wakeLockActive ? 'primary' : 'secondary'}
-                size="md"
-                className="w-full gap-2"
-              >
-                <Sun className={`w-4 h-4 ${wakeLockActive ? 'text-amber-300 animate-spin' : ''}`} />
-                <span>{wakeLockActive ? 'Screen Wake Lock Active (Tap to Release)' : 'Test Screen Wake Lock'}</span>
-              </Button>
-            </div>
-          </Card>
-        </div>
-
-        {/* Hardware Compatibility Guide Notice */}
-        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-start gap-3">
-          <Info className="w-5 h-5 text-[#F0A53A] flex-shrink-0 mt-0.5" />
-          <div className="text-xs text-slate-300 space-y-1">
-            <div className="font-bold text-white">Technician & Customer Hardware Notice</div>
-            <p>
-              Security checkpoint tags use either high frequency (13.56 MHz NFC / NDEF) or low frequency (125 kHz RFID / EM4100).
-              Standard smartphones with Google Chrome can read 13.56 MHz NFC tags directly. 
-              If the customer has 125 kHz buttons or iOS devices, the system automatically uses the high-contrast checkpoint QR cards.
-            </p>
+            {camera?.kind === 'unsupported' && <Notice tone="danger">{t('devCameraUnsupported')}</Notice>}
           </div>
-        </div>
+        </section>
+
+        <section aria-labelledby="dev-gps-heading" className="space-y-2">
+          <h2 id="dev-gps-heading" className="font-display text-2xl font-bold">
+            {t('devGpsTitle')}
+          </h2>
+          <Button type="button" variant="secondary" className="min-h-12 w-full gap-2 sm:w-auto" onClick={() => void testGps()} disabled={gpsBusy} data-testid="admin-device-gps-test">
+            <Navigation className="h-4 w-4" aria-hidden />
+            <span>{gpsBusy ? t('admGpsLocating') : t('devGpsTest')}</span>
+          </Button>
+          <div aria-live="polite" data-testid="admin-device-gps-result">
+            {gps && (gps.status === 'ok' || gps.status === 'stale') && (
+              <Notice tone={gps.status === 'stale' ? 'warning' : Number.isFinite(gps.accuracy) && gps.accuracy <= GPS_ACCEPTABLE_ACCURACY_M ? 'success' : 'warning'} title={gps.status === 'stale' ? t('admGpsStale') : t('devGpsFix')}>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-sm">
+                  <dt className="text-ee-muted">{t('admLatitude')}</dt>
+                  <dd className="font-mono">{gps.latitude.toFixed(6)}</dd>
+                  <dt className="text-ee-muted">{t('admLongitude')}</dt>
+                  <dd className="font-mono">{gps.longitude.toFixed(6)}</dd>
+                  <dt className="text-ee-muted">{t('devGpsAccuracy')}</dt>
+                  <dd data-testid="admin-device-gps-accuracy">{Number.isFinite(gps.accuracy) ? `±${Math.round(gps.accuracy)} m` : t('devUnknown')}</dd>
+                  <dt className="text-ee-muted">{t('devGpsAge')}</dt>
+                  <dd>{t('devSeconds', Math.round(gps.ageMs / 1000))}</dd>
+                  <dt className="text-ee-muted">{t('devGpsTime')}</dt>
+                  <dd>{formatSastDateTime(gps.timestamp, language)}</dd>
+                  <dt className="text-ee-muted">{t('devGpsSource')}</dt>
+                  <dd>{gps.source === 'coarse_retry' ? t('devGpsSourceCoarse') : t('devGpsSourceCurrent')}</dd>
+                </dl>
+              </Notice>
+            )}
+            {gps && gps.status !== 'ok' && gps.status !== 'stale' && (
+              <Notice tone="danger" title={t(GPS_FAILURE_KEYS[gps.status] ?? 'admGpsUnavailable')}>
+                {gps.message && (
+                  <p className="text-xs text-ee-muted break-words">
+                    {gps.status}: {gps.message}
+                  </p>
+                )}
+              </Notice>
+            )}
+          </div>
+        </section>
+
+        <section aria-labelledby="dev-alarm-heading" className="space-y-2">
+          <h2 id="dev-alarm-heading" className="font-display text-2xl font-bold">
+            {t('devAlarmTitle')}
+          </h2>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Button type="button" variant="secondary" className="min-h-12 gap-2" onClick={playTone} data-testid="admin-device-tone-test">
+              <Volume2 className="h-4 w-4" aria-hidden />
+              <span>{toneStarted === null ? t('devToneTest') : t('devToneAgain')}</span>
+            </Button>
+            <Button type="button" variant={wakeLock ? 'primary' : 'secondary'} className="min-h-12" onClick={() => void toggleWakeLock()} aria-pressed={wakeLock === true} data-testid="admin-device-wakelock-test">
+              {wakeLock ? t('devWakeLockRelease') : t('devWakeLockTest')}
+            </Button>
+          </div>
+          <div aria-live="polite" className="space-y-2">
+            {toneStarted !== null && <Notice tone="info" testId="admin-device-tone-result">{t('devToneStarted')}</Notice>}
+            {wakeLock !== null && (
+              <Notice tone={wakeLock ? 'success' : 'warning'} testId="admin-device-wakelock-result">
+                {wakeLock ? t('devWakeLockHeld') : t('devWakeLockNotHeld')}
+              </Notice>
+            )}
+          </div>
+        </section>
+
+        <AdminFooter page="device-test" />
       </main>
-    </div>
+    </>
   );
 }

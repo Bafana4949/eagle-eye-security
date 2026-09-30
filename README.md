@@ -1,196 +1,94 @@
-# 🦅 Eagle Eye Security Operations System
+# Eagle Eye Security
 
-A professional, production-ready, mobile-first security operations platform built for security guards, supervisors, and estate managers. Inspired by the Aiguille Security / Dawie Boerdery farm patrol system and rebuilt from the ground up with modern offline-first web technologies, relational PostgreSQL database, and cryptographic auditability.
+A mobile web app (installable PWA) for farm security guards, built for Aiguille Security at Dawie Boerdery.
+Guards clock in with a selfie and GPS, scan patrol checkpoints (NFC tag or QR card), log vehicles at the gate
+(including the South African licence-disc barcode), report incidents with photos and raise an SOS. It keeps
+working without signal and uploads when the phone is back online. Supervisors watch live activity and
+acknowledge SOS alerts; admins set up sites, checkpoints and staff; clients get a read-only view.
 
----
+**Status:** built and tested with emulated hardware. It has **not yet been tested on real hardware**: NFC tags,
+the camera, GPS, PDF417 licence discs, offline/reconnect on a phone and the WhatsApp hand-off. Run
+[docs/FIELD_TEST_CHECKLIST.md](docs/FIELD_TEST_CHECKLIST.md) on a real Android phone before real use.
 
-## 🌟 Key Capabilities
+## Roles
 
-### 📱 1. Mobile Guard Application (PWA)
-- **Installable Progressive Web App (PWA)**: Runs in standalone mode on Android and iOS devices, with offline app shell caching via Service Worker.
-- **Biometric Shift Clock-In / Clock-Out**: Enforces compressed photo selfie capture at shift start and end, with client-side downsampling to keep uploads fast and light.
-- **Patrol Checkpoint Engine**:
-  - Live round calculation based on configurable day/night shift bounds and round intervals.
-  - Checkpoint QR card scanning via integrated camera viewfinder, torch toggle, and photo upload fallback.
-  - Web NFC tag support on supported Android Chrome devices.
-  - GPS distance verification using the Haversine formula against configured beacon coordinates and accuracy tolerances.
-- **Vehicle & Gate Access Management**:
-  - South African Motor Vehicle Licence (MVL) disc PDF417 decoder extracting license plate, register number, make, model, colour, VIN, engine number, and expiry date.
-  - Expiry alert warning guards when a license disc has expired.
-  - Vehicle dwell-time tracker showing vehicles currently on premises and automatic duration calculation upon exit.
-  - Full manual licence plate entry fallback with validation.
-- **Incident Reporting**:
-  - 8 operational incident categories: Damaged fence, open gate, livestock issue, suspicious person/vehicle, fire, theft, medical emergency, other.
-  - Severity classification (Low, Medium, High, Critical).
-  - Attached incident photographs with automatic compression and GPS coordinate stamps.
-- **Deliberate SOS Panic Alarm**:
-  - 2-second tactile press-and-hold activation with visual progress bar and haptic vibration feedback to prevent accidental triggering.
-  - Direct one-touch phone dialers for supervisor and Police (10111).
-  - Real-time alert dispatch with exact GPS coordinates.
-- **True Offline-First Operation**:
-  - Uses IndexedDB (Dexie) rather than fragile `localStorage`.
-  - Offline event queue tracking sequence numbers, device timestamps, retry counts, and attached binary media blobs.
-  - Automatic idempotent synchronization against Supabase when network connectivity returns.
+| Role | Sees / does |
+| --- | --- |
+| `admin`, `super_admin` | The whole organisation: sites, checkpoints (QR cards, NFC tag registration), staff accounts, audit log |
+| `supervisor` | Only assigned sites: live activity, SOS alerts (acknowledge), incidents, evidence photos |
+| `guard` | Assigned sites: clock in/out, patrol scans, gate log, incidents, SOS |
+| `client_viewer` | Read-only, assigned sites; no SOS alerts, no selfies |
 
-### 🛡️ 2. Supervisor Operations Command Center
-- **Live Guard Tracking**: Real-time status cards showing guards currently on duty, offline guards, last scanned checkpoint, and shift durations.
-- **Overdue Patrol Detection**: Alerts when a checkpoint has not been visited within the required round window.
-- **Active Emergency Monitoring**: Immediate high-priority banners for SOS panic events and critical incidents with acknowledgment workflows and supervisor note logging.
-- **Gate Activity Feed**: Real-time timeline of vehicle movements and dwell times.
+Security is enforced in PostgreSQL by Row Level Security policies and triggers, not by the screens.
+Sign-in is real Supabase e-mail/password. Guards type a username; a login without `@` becomes
+`<username>@<NEXT_PUBLIC_GUARD_LOGIN_DOMAIN>` (default `guards.eagleeye.local`). There is no PIN login.
+Accounts are created by an admin (Admin → Staff, server route `/api/admin/users`); nobody can sign up alone.
 
-### ⚙️ 3. Administrator Portal
-- **Site & Shift Configuration**: Configurable day/night shift hours, round intervals (30m, 45m, 60m, 90m, 120m), and emergency phone numbers.
-- **Secure Checkpoint Management**:
-  - Creates checkpoints with secure, non-predictable random identifiers (`EE-CP-XXXXXX`) instead of guessable sequential numbers.
-  - Custom permitted validation radii per beacon (30m, 50m, 75m, 100m).
-  - Integrated printable QR cards generator formatted for standard laminating and outdoor placement.
-- **Guard Roster**: Manage guard accounts, employee numbers, and contact numbers.
-- **Reporting & CSV Exports**: One-click export of patrol scan records, GPS metadata, and compliance percentages.
-- **Immutable Audit Trail**: Authoritative event logs tracking critical operations.
+## How key features work
 
-### 🌐 4. Trilingual Support
-Built-in internationalization with instant switching between:
-- 🇿🇦 **Afrikaans**
-- 🇬🇧 **English**
-- 🇿🇦 **isiZulu**
+- **Offline:** records are queued on the phone (IndexedDB) per user and upload only while that same user is
+  signed in. Screens show "Saved on this phone" / "Uploaded"; failures are listed with the reason. SOS jumps
+  the queue (Queued → Submitted → Acknowledged).
+- **Evidence photos** go to the private Storage bucket `evidence-media` under
+  `{org}/{site}/{category}/{user}/{uuid}-{field}.jpg`; supervisors open them with short-lived signed links.
+  Selfies are resized to about 1024 px JPEG.
+- **GPS confidence** is computed by the server: verified / likely / low_confidence / outside / no_fix /
+  no_reference.
+- **NFC** uses Web NFC (Chrome on Android over HTTPS only; iPhone → QR cards). The app reads the tag's serial
+  number and never invents one. Phones hold only SHA-256 fingerprints of tag serials and QR tokens
+  (`EE-CP-` + 32 hex). Tag serials are identifiers, not secrets: a cloned tag still cannot get past sign-in,
+  site assignment, the active shift, the checkpoint–site match, the server GPS check or the audit log.
+  Dawie's old `PLAAS-CP:<code>` cards work only where the site allows legacy QR.
+- **WhatsApp:** the app prepares a message and opens WhatsApp; the guard presses Send. The app never claims a
+  message was sent.
 
----
+## Stack
 
-## 🏗️ Technology Stack
+Next.js 16 (App Router) + React 19, TypeScript, Tailwind CSS v4, Supabase (Postgres, Auth, Storage,
+Realtime), Dexie (IndexedDB), zxing (PDF417) and html5-qrcode, service worker for offline use.
 
-| Layer | Technology |
-|---|---|
-| **Framework** | Next.js 16 (App Router, Turbopack) |
-| **Language** | TypeScript (Strict mode) |
-| **Styling** | Tailwind CSS v4 |
-| **Icons** | Lucide React |
-| **Client Database** | IndexedDB via Dexie v4 |
-| **QR Engine** | HTML5-QRCode with canvas image fallback |
-| **Backend & Database** | Supabase (PostgreSQL 15+, Auth, Storage, Realtime) |
-| **Validation** | Zod v4 |
-| **Testing** | Node.js Test Runner with `tsx` |
+## Run locally
 
----
+Requires Node.js 20.9 or newer.
 
-## 🚀 Quick Start & Local Development
-
-### 1. Prerequisites
-- Node.js v20+ or v24+
-- npm v10+
-
-### 2. Installation
 ```bash
-cd eagle-eye-security
 npm install
 ```
 
-### 3. Environment Variables
-Copy `.env.example` to `.env.local`:
+Create `.env.local` (never commit it):
+
 ```bash
-cp .env.example .env.local
-```
-Configure your Supabase credentials:
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-NEXT_PUBLIC_APP_URL=http://localhost:3000
+NEXT_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
+# optional
+NEXT_PUBLIC_GUARD_LOGIN_DOMAIN=guards.eagleeye.local
+# only needed to create staff from the Admin screen locally; server-only, never NEXT_PUBLIC_
+SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
 ```
 
-### 4. Database Setup (Supabase)
-1. Open your Supabase SQL Editor.
-2. Run the migration script located at:
-   [`supabase/migrations/20260930_init_schema.sql`](file:///c:/Users/Bafana%20Bhuda/Downloads/Eagle%20Eye_Aiguille%20Security%20application/eagle-eye-security/supabase/migrations/20260930_init_schema.sql)
-3. For local or staging demo data, run the seed script:
-   [`supabase/seed.sql`](file:///c:/Users/Bafana%20Bhuda/Downloads/Eagle%20Eye_Aiguille%20Security%20application/eagle-eye-security/supabase/seed.sql)
-4. In Supabase Storage, create a bucket named `evidence-media` and set appropriate private access policies with signed URLs.
-
-### 5. Running the Application
 ```bash
-# Start local development server
-npm run dev
-
-# Run test suite
-npm test
-
-# Run TypeScript typecheck
-npm run typecheck
-
-# Build for production
-npm run build
+npm run dev     # http://localhost:3000
 ```
 
----
+Camera, GPS and NFC need HTTPS on a phone; test hardware on a deployed (preview) HTTPS URL.
 
-## 📲 How Security Guards Install the PWA
+## Tests
 
-### On Android (Google Chrome):
-1. Open the deployed application URL in Chrome over HTTPS.
-2. Tap the browser menu (three vertical dots in top-right) and select **"Install app"** or **"Add to Home screen"**.
-3. Allow camera and location permissions when prompted.
-4. Launch Eagle Eye from the home screen for the full app experience.
+| Command | Covers |
+| --- | --- |
+| `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
+| `npm test` | Unit tests that import the production modules (auth, offline sync queue, NFC wrapper, checkpoints, GPS confidence, licence-disc parser, WhatsApp summary, …) |
+| `npm run test:db` | Applies the real `supabase/migrations` to PGlite (in-process Postgres, no Docker) and tests RLS, triggers, storage policies and attack cases per role |
+| `npm run test:e2e` | Playwright end-to-end flows against a fake Supabase with emulated camera / GPS / NFC (when the suite is present) |
+| `npm run build` | Production build |
 
-### On iPhone (Apple Safari):
-1. Open the URL in Safari.
-2. Tap the **Share** button (box with an upward arrow) at the bottom.
-3. Scroll down and tap **"Add to Home Screen"**.
-4. Confirm name and tap **Add**.
+None of these replace testing on a real phone.
 
----
+## Documentation
 
-## 🔒 Security & POPIA Compliance
-
-- **Row Level Security (RLS)**: Guards can only view and insert records assigned to their active shifts. Supervisors can oversee their assigned site. Company A cannot access Company B.
-- **Private Media Storage**: Photos are not publicly accessible via static predictable URLs. Signed URLs with short expiration are generated for supervisor review.
-- **Authoritative Timestamps**: Offline client timestamps are strictly differentiated from authoritative server reception timestamps (`scan_timestamp_device` vs `scan_timestamp_server`) to prevent clock manipulation.
-- **POPIA Data Minimisation**: Licence disc VIN and engine numbers are stored securely with restricted access and retained only for the required operational period.
-
----
-
-## 📁 Project Structure
-
-```
-eagle-eye-security/
-├── public/
-│   ├── manifest.json         # PWA Manifest
-│   ├── sw.js                 # Service Worker with offline caching
-│   ├── offline.html          # Offline fallback template
-│   ├── icon-192.png          # App icon (192x192)
-│   └── icon-512.png          # App icon (512x512)
-├── src/
-│   ├── app/
-│   │   ├── (auth)/login/     # Guard PIN & Supervisor login
-│   │   ├── guard/            # Mobile Guard Operations
-│   │   │   ├── page.tsx      # Guard Dashboard & Clock In/Out
-│   │   │   ├── patrol/       # Route checkpoints & QR/NFC scan
-│   │   │   ├── gate/         # SA Disc decoding & vehicle access
-│   │   │   ├── incident/     # Incident reporting & photo evidence
-│   │   │   ├── history/      # Scan history & shift log
-│   │   │   └── more/         # Sync status & language settings
-│   │   ├── supervisor/       # Real-time Supervisor Command Center
-│   │   ├── admin/            # Checkpoints, QR Cards & Site Settings
-│   │   ├── layout.tsx        # PWA root layout
-│   │   └── page.tsx          # Portal landing & role router
-│   ├── components/
-│   │   ├── guard/            # BottomNav, HeaderBar, SosPanicModal
-│   │   ├── shared/           # QrScannerModal, CameraCaptureModal
-│   │   └── ui/               # Button, Card, Badge primitives
-│   ├── features/
-│   │   └── shifts/           # Shift & round window calculator
-│   ├── lib/
-│   │   ├── gps/              # Haversine distance & proximity check
-│   │   ├── i18n/             # Trilingual dictionaries & hook
-│   │   ├── license-disc/     # SA PDF417 MVL disc decoder
-│   │   ├── offline/          # Dexie IndexedDB & idempotent sync
-│   │   ├── supabase/         # Supabase client & connection helpers
-│   │   └── utils/            # Image compression & SHA-256 hash
-│   └── types/                # Domain models, offline queue, database types
-└── supabase/
-    ├── migrations/           # PostgreSQL schema & RLS policies
-    └── seed.sql              # Staging / demo seed data
-```
-
----
-
-## 📄 License & Attribution
-Built for **Aiguille Security & Dawie Boerdery**, 2026. All rights reserved.
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) – deploying to Supabase + Vercel, including the required security
+  steps for the live project (key rotation, migration, test accounts)
+- [docs/FIELD_TEST_CHECKLIST.md](docs/FIELD_TEST_CHECKLIST.md) – step-by-step test on a Samsung Android phone
+- [docs/THEME.md](docs/THEME.md) – colour tokens and fonts
+- Older manuals in `docs/` (user, supervisor, admin, hardware, demo) have not been re-checked against this
+  build; where they disagree, the three documents above and the code win.

@@ -1,32 +1,41 @@
 import React from 'react';
+import { twMerge } from 'tailwind-merge';
 
-interface EmptyStateProps {
+export interface EmptyStateProps extends Omit<React.ComponentPropsWithRef<'div'>, 'title'> {
   icon?: React.ReactNode;
   title: string;
   description?: string;
   action?: React.ReactNode;
-  className?: string;
+  /** Heading level of the title; use 'p' when the surrounding page already has the right heading. */
+  titleAs?: 'h2' | 'h3' | 'h4' | 'p';
 }
 
+/** Honest "nothing here yet" state. Never fill an empty list with sample data. */
 export function EmptyState({
   icon,
   title,
   description,
   action,
-  className = ''
+  titleAs: Title = 'h3',
+  className,
+  ...props
 }: EmptyStateProps) {
   return (
     <div
-      className={`p-8 text-center rounded-2xl border border-dashed border-slate-800 bg-slate-900/50 flex flex-col items-center justify-center ${className}`}
-    >
-      {icon && <div className="text-slate-500 mb-3">{icon}</div>}
-      <h3 className="text-sm font-bold text-slate-200">{title}</h3>
-      {description && (
-        <p className="text-xs text-slate-400 max-w-sm mt-1 mb-4 leading-relaxed">
-          {description}
-        </p>
+      className={twMerge(
+        'flex flex-col items-center justify-center rounded-xl border border-dashed border-ee-border px-4 py-8 text-center',
+        className
       )}
-      {action && <div>{action}</div>}
+      {...props}
+    >
+      {icon && (
+        <div aria-hidden="true" className="mb-3 text-ee-muted">
+          {icon}
+        </div>
+      )}
+      <Title className="font-display text-lg font-semibold text-ee-text">{title}</Title>
+      {description && <p className="mt-1 max-w-sm text-sm leading-relaxed text-ee-muted">{description}</p>}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   );
 }

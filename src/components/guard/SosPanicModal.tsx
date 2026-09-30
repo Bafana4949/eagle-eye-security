@@ -1,245 +1,281 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
-import { AlertOctagon, PhoneCall, ShieldAlert, X, CheckCircle, Radio } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Phone, Siren, X } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n/context';
+import { useAuth } from '@/lib/auth/AuthProvider';
 import { syncEngine } from '@/lib/offline/sync';
-import { offlineDB } from '@/lib/offline/db';
+import { eventLocationFromFix } from '@/lib/offline/eventLocation';
+import { getActiveShift, type ActiveShiftRecord } from '@/lib/data/shiftStore';
+import { STALE_FIX_MS, getLocationFix, startLocationWatch, type LocationWatchHandle } from '@/lib/gps/location';
+import { sastTimeHM } from '@/lib/config/siteTime';
+import type { EventContext, EventLocation } from '@/types/offline';
+import type { Site } from '@/types/models';
+import { SosHoldButton } from './incident/SosHoldButton';
+import { SosPanicScreen, type RaisedPanic } from './incident/SosPanicScreen';
+import { useModalFocus } from './incident/useModalFocus';
+import { messageLocationFromFix, policeNumber, telHref } from './incident/incidentLogic';
 
-interface SosPanicModalProps {
-  userId: string;
-  siteId: string;
-  shiftId?: string;
-  guardName?: string;
-  supervisorPhone?: string;
-  policePhone?: string;
-}
+type View = 'closed' | 'hold' | 'panic';
 
-type AlertStage = 'holding' | 'triggered';
+/** undefined while the running shift is still being read from this phone. */
+type ShiftLookup = ActiveShiftRecord | null | undefined;
 
-export function SosPanicModal({
-  userId,
-  siteId,
-  shiftId,
-  guardName,
-  supervisorPhone = '+27829994321',
-  policePhone = '10111'
-}: SosPanicModalProps) {
+const NO_LOCATION: EventLocation = {
+  latitude: null,
+  longitude: null,
+  accuracyMeters: null,
+  locationTimestamp: null,
+  gpsError: null
+};
+
+/**
+ * Persistent SOS button of the guard app, the press-and-hold dialog and the panic screen.
+ *
+ * Identity comes only from useAuth() and the running shift from the shift store (no props).
+ * On a completed 2 s hold the alert is queued IMMEDIATELY with the best position available at
+ * that moment (the last fresh fix of the GPS watch, or none) — it never waits for GPS. The sync
+ * engine sends panics first. A fresh fix is then requested for the WhatsApp text only.
+ */
+export function SosPanicModal() {
   const { t } = useTranslation();
-  const [isOpen, setIsOpen] = useState(false);
-  const [stage, setStage] = useState<AlertStage>('holding');
-  const [isArmed, setIsArmed] = useState(false);
-  const [progress, setProgress] = useState(0); // 0 to 100
-  const [locationSummary, setLocationSummary] = useState<string>('Detecting GPS...');
-  const [deliveryStatus, setDeliveryStatus] = useState<'queued' | 'sent' | 'acknowledged'>('queued');
+  const { user, profile, activeSite, sites } = useAuth();
+  const [view, setView] = useState<View>('closed');
+  const [panic, setPanic] = useState<RaisedPanic | null>(null);
+  const [shift, setShift] = useState<ShiftLookup>(undefined);
+  const watchRef = useRef<LocationWatchHandle | null>(null);
+  const shiftPromiseRef = useRef<Promise<ActiveShiftRecord | null> | null>(null);
+  const holdDialogRef = useRef<HTMLDivElement>(null);
+  const holdButtonRef = useRef<HTMLButtonElement>(null);
+  const panicKeyRef = useRef(0);
 
-  const pressStartRef = useRef<number>(0);
-  const animationFrameRef = useRef<number | null>(null);
+  const userId = user?.id ?? null;
+  const uiOpen = view !== 'closed';
+  const canRecord = !!userId && (!!shift || (!!activeSite && !!profile));
+  const guardName = profile ? `${profile.firstName ?? ''} ${profile.lastName ?? ''}`.trim() || null : null;
 
-  const HOLD_DURATION_MS = 2000; // 2 seconds deliberate hold to prevent accidental trigger
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    e.preventDefault();
-    pressStartRef.current = Date.now();
-    setIsArmed(false);
-    setProgress(0);
-
-    const step = () => {
-      const elapsed = Date.now() - pressStartRef.current;
-      const pct = Math.min(100, (elapsed / HOLD_DURATION_MS) * 100);
-      setProgress(pct);
-
-      if (pct >= 100) {
-        setIsArmed(true);
-        if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          navigator.vibrate([300, 100, 300]);
-        }
-      } else {
-        animationFrameRef.current = requestAnimationFrame(step);
+  // Keep GPS warm while the SOS UI is open (joins the shift's shared watch when one runs).
+  // Only when the location permission is already answered: a permission prompt must never cover
+  // the SOS button. Otherwise the prompt appears later, for the WhatsApp fix, after the alert is saved.
+  useEffect(() => {
+    if (!uiOpen) return;
+    let cancelled = false;
+    let handle: LocationWatchHandle | null = null;
+    const start = () => {
+      if (cancelled) return;
+      handle = startLocationWatch();
+      watchRef.current = handle;
+    };
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      start(); // Fails at once with 'insecure' (no prompt); the alert records that reason.
+    } else if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
+      navigator.permissions
+        .query({ name: 'geolocation' })
+        .then((permission) => {
+          if (permission.state !== 'prompt') start();
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      cancelled = true;
+      if (handle) {
+        handle.stop();
+        if (watchRef.current === handle) watchRef.current = null;
       }
     };
+  }, [uiOpen]);
 
-    animationFrameRef.current = requestAnimationFrame(step);
+  const closeHold = useCallback(() => setView('closed'), []);
+  useModalFocus(view === 'hold', holdDialogRef, {
+    initialFocusRef: canRecord ? holdButtonRef : undefined,
+    onEscape: closeHold
+  });
+
+  const siteFor = (siteId: string): Site | null =>
+    sites.find((site) => site.id === siteId) ?? (activeSite?.id === siteId ? activeSite : null);
+
+  /** Where the alert is recorded: the running shift's site, else the active site. */
+  const targetFor = (record: ActiveShiftRecord | null): { ctx: EventContext; site: Site | null } | null => {
+    if (!userId) return null;
+    if (record) {
+      return {
+        ctx: { userId, organisationId: record.organisationId, siteId: record.siteId },
+        site: siteFor(record.siteId)
+      };
+    }
+    if (activeSite && profile) {
+      return { ctx: { userId, organisationId: profile.organisationId, siteId: activeSite.id }, site: activeSite };
+    }
+    return null;
   };
 
-  const handlePointerUp = () => {
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-
-    if (isArmed) {
-      void triggerPanicAlert();
-    }
-
-    setProgress(0);
-    setIsArmed(false);
-  };
-
-  const handlePointerCancel = () => {
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-    setProgress(0);
-    setIsArmed(false);
-  };
-
-  const triggerPanicAlert = async () => {
-    setStage('triggered');
-
-    let lat: number | undefined;
-    let lon: number | undefined;
-    let acc: number | undefined;
-
-    if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      try {
-        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: true,
-            timeout: 6000
-          });
-        });
-        lat = pos.coords.latitude;
-        lon = pos.coords.longitude;
-        acc = Math.round(pos.coords.accuracy);
-        setLocationSummary(`${lat.toFixed(5)}, ${lon.toFixed(5)} (±${acc}m)`);
-      } catch {
-        setLocationSummary('GPS Signal Unavailable');
-      }
-    }
-
-    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    setDeliveryStatus(isOnline ? 'sent' : 'queued');
-
-    // Save to local offline queue & sync
-    if (syncEngine && offlineDB) {
-      await syncEngine.enqueue('panic', userId, siteId, {
-        shiftId,
-        guardName,
-        latitude: lat,
-        longitude: lon,
-        accuracyMeters: acc
+  const openHold = () => {
+    // Read the running shift now, so it is ready (from IndexedDB) before the 2 s hold completes.
+    if (userId) {
+      const promise = getActiveShift(userId).catch(() => null);
+      shiftPromiseRef.current = promise;
+      setShift(undefined);
+      void promise.then((record) => {
+        if (shiftPromiseRef.current === promise) setShift(record);
       });
     }
+    setView('hold');
+  };
 
-    // Emergency vibration rhythm
-    if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate([500, 200, 500, 200, 500]);
+  const raise = async () => {
+    const key = ++panicKeyRef.current;
+    const triggeredAt = Date.now();
+    const watch = watchRef.current;
+    // Best position RIGHT NOW: the watch's last fix if it is fresh (≤ 120 s), else none.
+    const lastFix = watch?.peek(STALE_FIX_MS) ?? null;
+    const savedLocation: EventLocation = lastFix
+      ? eventLocationFromFix(lastFix)
+      : { ...NO_LOCATION, gpsError: watch?.lastError()?.status ?? null };
+    const provisional = targetFor(shift ?? null);
+
+    setPanic({
+      key,
+      triggeredAt,
+      eventId: null,
+      saveError: null,
+      site: provisional?.site ?? activeSite ?? null,
+      savedLocation,
+      savedMessageLocation: messageLocationFromFix(lastFix, triggeredAt),
+      fresh: { phase: 'finding', location: null, error: null }
+    });
+    setView('panic');
+
+    const update = (patch: (current: RaisedPanic) => RaisedPanic) =>
+      setPanic((current) => (current && current.key === key ? patch(current) : current));
+
+    // A fresh fix for the WhatsApp text only, requested in parallel (the alert does not wait).
+    void getLocationFix({ maxAgeMs: 30_000, timeoutMs: 10_000 }).then((fix) => {
+      const location = messageLocationFromFix(fix, Date.now());
+      const error = fix.status === 'ok' || fix.status === 'stale' ? null : fix.status;
+      update((current) => ({ ...current, fresh: { phase: 'done', location, error } }));
+    });
+
+    try {
+      const engine = syncEngine;
+      if (!engine) throw new Error(t('incident.noStorage'));
+      const record = shift !== undefined ? shift : await (shiftPromiseRef.current ?? Promise.resolve(null));
+      const target = targetFor(record);
+      if (!target) throw new Error(t('incident.sos.noSite'));
+      const eventId = await engine.enqueue('panic', target.ctx, { shiftId: record?.shiftId ?? null, ...savedLocation });
+      update((current) => ({ ...current, eventId, site: target.site ?? current.site }));
+    } catch (error) {
+      update((current) => ({ ...current, saveError: error instanceof Error ? error.message : String(error) }));
     }
   };
+
+  const police = policeNumber(activeSite?.policePhone);
+  const policeHref = telHref(police.number);
 
   return (
     <>
-      {/* Persistent Floating SOS Button */}
       <button
-        onClick={() => setIsOpen(true)}
-        className="fixed bottom-20 right-4 z-40 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-black px-4 py-3 rounded-full shadow-2xl shadow-rose-950/70 flex items-center gap-2 border-2 border-rose-400 select-none animate-pulse"
-        aria-label="Emergency SOS Panic Button"
+        type="button"
+        onClick={openHold}
+        aria-haspopup="dialog"
+        aria-label={t('incident.sos.openLabel')}
+        data-testid="sos-open"
+        className="fixed right-4 z-40 flex min-h-14 min-w-14 items-center justify-center gap-2 rounded-full border-2 border-ee-on-danger/40 bg-ee-sos px-5 font-display text-xl font-bold tracking-wide text-ee-on-danger shadow-lg hover:bg-ee-sos-deep"
+        style={{ bottom: 'calc(5.5rem + env(safe-area-inset-bottom, 0px))' }}
       >
-        <AlertOctagon className="w-5 h-5 text-white" />
-        <span className="text-sm font-black tracking-wider">SOS</span>
+        <Siren className="h-6 w-6" aria-hidden="true" />
+        <span>{t('incident.sos.open')}</span>
       </button>
 
-      {/* SOS Modal Dialog */}
-      {isOpen && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border-2 border-rose-600 rounded-3xl max-w-sm w-full p-6 text-center shadow-2xl shadow-rose-950/80 relative">
-            <button
-              onClick={() => {
-                setIsOpen(false);
-                setStage('holding');
-              }}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-2"
-            >
-              <X className="w-6 h-6" />
-            </button>
+      {view === 'hold' && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-ee-bg/90 sm:items-center"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeHold();
+          }}
+        >
+          <div
+            ref={holdDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sos-hold-title"
+            aria-describedby="sos-hold-instructions"
+            tabIndex={-1}
+            data-testid="sos-hold-dialog"
+            className="w-full max-w-md space-y-4 rounded-t-2xl border-t-4 border-ee-sos bg-ee-surface p-4 focus:outline-none sm:rounded-2xl sm:border-4"
+            style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <h2 id="sos-hold-title" className="font-display text-3xl font-bold text-ee-text">
+                {t('incident.sos.title')}
+              </h2>
+              <button
+                type="button"
+                onClick={closeHold}
+                aria-label={t('incident.sos.cancel')}
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-ee-muted hover:bg-ee-surface-raised hover:text-ee-text"
+              >
+                <X className="h-6 w-6" aria-hidden="true" />
+              </button>
+            </div>
 
-            {stage === 'holding' ? (
-              <div className="flex flex-col items-center">
-                <div className="w-16 h-16 rounded-full bg-rose-950/80 border-2 border-rose-600 flex items-center justify-center mb-4 text-rose-500">
-                  <ShieldAlert className="w-9 h-9" />
-                </div>
+            <p id="sos-hold-instructions" className="text-base text-ee-text">
+              {t('incident.sos.instructions')}
+            </p>
 
-                <h2 className="text-2xl font-black text-rose-500 tracking-tight mb-1">
-                  EMERGENCY SOS
-                </h2>
-                <p className="text-xs text-slate-300 mb-5 font-medium leading-relaxed">
-                  {isArmed ? 'RELEASE NOW TO TRANSMIT ALERT' : 'Press and hold for 2 seconds to trigger emergency broadcast'}
-                </p>
-
-                {/* Tactile Press & Hold Button */}
-                <div
-                  onPointerDown={handlePointerDown}
-                  onPointerUp={handlePointerUp}
-                  onPointerCancel={handlePointerCancel}
-                  onPointerLeave={handlePointerCancel}
-                  className="relative w-full h-20 rounded-2xl bg-rose-950/80 border-2 border-rose-600 overflow-hidden cursor-pointer select-none flex items-center justify-center shadow-inner active:scale-[0.98] transition-transform"
-                >
-                  {/* Progress Fill Bar */}
-                  <div
-                    className={`absolute left-0 top-0 bottom-0 transition-all ${
-                      isArmed ? 'bg-rose-500' : 'bg-rose-600/70'
-                    }`}
-                    style={{ width: `${progress}%` }}
-                  />
-
-                  <span className="relative z-10 font-black text-base tracking-wider text-white flex items-center gap-2">
-                    <AlertOctagon className="w-6 h-6" />
-                    {isArmed ? 'RELEASE TO BROADCAST' : t('panicButton')}
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center animate-in zoom-in-95 duration-150">
-                <div className="w-16 h-16 rounded-full bg-rose-600 flex items-center justify-center mb-3 text-white animate-bounce shadow-lg shadow-rose-950">
-                  <AlertOctagon className="w-9 h-9" />
-                </div>
-
-                <h2 className="text-xl font-black text-rose-500 mb-1">
-                  EMERGENCY ALERT SENT
-                </h2>
-                <p className="text-xs font-mono text-slate-300 mb-3">{locationSummary}</p>
-
-                {/* Status Progression Lifecycle */}
-                <div className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs mb-5 space-y-1.5 font-mono">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500">Transmission:</span>
-                    <span className="font-bold text-emerald-400 flex items-center gap-1">
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      <span>{deliveryStatus.toUpperCase()}</span>
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500">Dispatch:</span>
-                    <span className="font-bold text-[#F0A53A] flex items-center gap-1">
-                      <Radio className="w-3.5 h-3.5 animate-pulse" />
-                      <span>SUPERVISOR NOTIFIED</span>
-                    </span>
-                  </div>
-                </div>
-
-                <div className="w-full flex flex-col gap-2.5">
+            {!canRecord && (
+              <div className="space-y-3" data-testid="sos-no-site">
+                <p className="text-base font-semibold text-ee-warning">{t('incident.sos.noSite')}</p>
+                {policeHref && (
                   <a
-                    href={`tel:${supervisorPhone}`}
-                    className="w-full py-4 px-6 bg-[#F0A53A] hover:bg-[#FFC76A] text-[#2A1A04] font-bold text-sm rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-[#F0A53A]/20 border border-[#F0A53A]"
+                    href={policeHref}
+                    data-testid="sos-hold-call-police"
+                    className="flex min-h-14 w-full items-center justify-center rounded-xl border border-ee-border bg-ee-bg px-4 no-underline hover:bg-ee-surface-raised"
                   >
-                    <PhoneCall className="w-5 h-5" />
-                    <span>Call Supervisor Directly</span>
+                    {/* Colour on the span: globals.css styles bare <a> outside the utility layer. */}
+                    <span className="flex items-center gap-2 text-lg font-semibold text-ee-text">
+                      <Phone className="h-5 w-5" aria-hidden="true" />
+                      {t('incident.sos.call.police', police.number)}
+                    </span>
                   </a>
-
-                  <a
-                    href={`tel:${policePhone}`}
-                    className="w-full py-3.5 px-6 bg-slate-800 hover:bg-slate-700 text-rose-400 border border-rose-900 font-bold text-xs rounded-2xl flex items-center justify-center gap-2"
-                  >
-                    <PhoneCall className="w-4 h-4" />
-                    <span>Call Police Emergency (10111)</span>
-                  </a>
-                </div>
+                )}
               </div>
             )}
+
+            <SosHoldButton
+              ref={holdButtonRef}
+              onTrigger={() => void raise()}
+              disabled={!canRecord}
+              describedById="sos-hold-instructions sos-hold-keyboard"
+            />
+            <p id="sos-hold-keyboard" className="text-sm text-ee-muted">
+              {t('incident.sos.keyboardHint')}
+            </p>
+
+            {panic && (
+              <button
+                type="button"
+                onClick={() => setView('panic')}
+                data-testid="sos-view-last"
+                className="flex min-h-12 w-full items-center justify-center rounded-xl border border-ee-border bg-ee-bg px-4 text-base font-semibold text-ee-text hover:bg-ee-surface-raised"
+              >
+                {t('incident.sos.viewLast', sastTimeHM(panic.triggeredAt))}
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={closeHold}
+              data-testid="sos-hold-cancel"
+              className="flex min-h-12 w-full items-center justify-center rounded-xl border border-ee-border bg-ee-surface px-4 text-base font-semibold text-ee-text hover:bg-ee-surface-raised"
+            >
+              {t('incident.sos.cancel')}
+            </button>
           </div>
         </div>
+      )}
+
+      {view === 'panic' && panic && (
+        <SosPanicScreen panic={panic} guardName={guardName} onClose={() => setView('closed')} />
       )}
     </>
   );

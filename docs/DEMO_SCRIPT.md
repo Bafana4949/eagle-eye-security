@@ -1,3 +1,5 @@
+> **OUTDATED — do not rely on this document.** It was written for the pre-audit version of Eagle Eye and describes features that were fake or have since been removed (e.g. guard PIN login, demo accounts, mock dashboards, "sent/verified" messages). For the current, verified behaviour see [README](../README.md), [FIELD_TEST_CHECKLIST](FIELD_TEST_CHECKLIST.md), [DEPLOYMENT](DEPLOYMENT.md) and [THEME](THEME.md). This manual will be rewritten after field testing.
+
 # EAGLE EYE SECURITY OPERATIONS PLATFORM
 ## Client Demonstration Script for Dawie Boerdery & Aiguille Security
 

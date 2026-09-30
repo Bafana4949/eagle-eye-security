@@ -1,40 +1,83 @@
 @import "tailwindcss";
 
-:root {
-  --night: #18212B;
-  --panel: #212C38;
-  --line: #324050;
-  --bone: #E9E4D8;
-  --dim: #9AA5B1;
-  --lamp: #F0A53A;
-  --lamp-deep: #C9801C;
-  --ok: #76C08F;
-  --bad: #E0685C;
-  --panic-bg: #B3261E;
-  --panic-panel: #7A1812;
+/*
+ * Eagle Eye theme tokens.
+ * Palette taken from Dawie's original Eagle Eye app (:root in "1 - app (host these files)/index.html"):
+ *   --night #18212B  --panel #212C38  --line #324050  --bone #E9E4D8  --dim #9AA5B1
+ *   --lamp #F0A53A  --lamp-deep #C9801C  --ok #76C08F  --bad #E0685C  SOS #B3261E / #7A1812
+ * Use the generated utilities (bg-ee-bg, bg-ee-surface, border-ee-border, text-ee-text, text-ee-muted,
+ * bg-ee-primary, text-ee-on-primary, text-ee-success, text-ee-warning, text-ee-danger, bg-ee-sos, …).
+ * Do not use hex literals or other Tailwind colour palettes in components.
+ */
+@theme {
+  --color-ee-bg: #18212B;             /* page background (night) */
+  --color-ee-surface: #212C38;        /* cards, panels, bottom navigation (panel) */
+  --color-ee-surface-raised: #2A3746; /* hover / pressed surface (panel lightened for feedback) */
+  --color-ee-border: #324050;         /* borders, dividers, inactive outlines (line) */
+  --color-ee-text: #E9E4D8;           /* headings and body text (bone) */
+  --color-ee-muted: #9AA5B1;          /* secondary text, labels, inactive nav (dim) */
+  --color-ee-primary: #F0A53A;        /* primary buttons, active nav, focus ring, links (lamp) */
+  --color-ee-primary-strong: #C9801C; /* primary pressed / emphasis (lamp-deep) */
+  --color-ee-on-primary: #2A1A04;     /* text on primary */
+  --color-ee-success: #76C08F;        /* done, online, synced, verified (ok) */
+  --color-ee-warning: #F0A53A;        /* due soon, offline, queued, low GPS confidence (lamp) */
+  --color-ee-danger: #E0685C;         /* errors, missed, outside radius, failed sync (bad) */
+  --color-ee-danger-text: #EF8A80;    /* danger for SMALL text on ee-surface / tinted panels: ee-danger is only
+                                         4.25:1 on ee-surface (below WCAG AA 4.5:1); this is 5.8:1 (added by pwa/ui) */
+  --color-ee-sos: #B3261E;            /* SOS button */
+  --color-ee-sos-deep: #7A1812;       /* SOS / panic screen background */
+  --color-ee-on-danger: #FFFFFF;      /* text on SOS / danger fills */
 
-  --background: #18212B;
-  --foreground: #E9E4D8;
+  --font-sans: var(--font-barlow), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: var(--font-barlow-condensed), "Roboto Condensed", "Arial Narrow", sans-serif;
 }
 
-html, body {
-  background-color: #18212B;
-  color: #E9E4D8;
-  font-family: var(--font-barlow, system-ui, -apple-system, sans-serif);
+/* Legacy variable names kept for any CSS that still references Dawie's names. */
+:root {
+  --night: var(--color-ee-bg);
+  --panel: var(--color-ee-surface);
+  --line: var(--color-ee-border);
+  --bone: var(--color-ee-text);
+  --dim: var(--color-ee-muted);
+  --lamp: var(--color-ee-primary);
+  --lamp-deep: var(--color-ee-primary-strong);
+  --ok: var(--color-ee-success);
+  --bad: var(--color-ee-danger);
+  --background: var(--color-ee-bg);
+  --foreground: var(--color-ee-text);
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: var(--color-ee-bg);
+  color: var(--color-ee-text);
+  font-family: var(--font-sans);
   margin: 0;
   padding: 0;
   min-height: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
-/* Punch-clock round button from Dawie's design */
+a {
+  color: var(--color-ee-primary);
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-ee-primary);
+  outline-offset: 2px;
+}
+
+/* Dawie's one bold element: the round punch-clock button. */
 .punch-btn {
   display: grid;
   place-items: center;
   border-radius: 50%;
   border: none;
-  background: radial-gradient(circle at 35% 30%, #FFC76A, #F0A53A 45%, #C9801C);
-  color: #2A1A04;
-  box-shadow: 0 0 0 8px rgba(240, 165, 58, 0.15), 0 0 0 16px rgba(240, 165, 58, 0.05);
+  background: radial-gradient(circle at 35% 30%, #FFC76A, var(--color-ee-primary) 45%, var(--color-ee-primary-strong));
+  color: var(--color-ee-on-primary);
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--color-ee-primary) 15%, transparent),
+    0 0 0 16px color-mix(in srgb, var(--color-ee-primary) 5%, transparent);
   cursor: pointer;
   transition: transform 0.15s ease;
 }
@@ -42,24 +85,54 @@ html, body {
   transform: scale(0.96);
 }
 
-/* Focus outline matching signature lantern */
-:focus-visible {
-  outline: 2px solid #F0A53A;
-  outline-offset: 2px;
+.punch-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
 }
 
-/* Custom Scrollbars */
+/* No double-tap zoom delay on controls (one-handed, fast taps with gloves). */
+button,
+a,
+input,
+select,
+textarea,
+label,
+summary,
+[role="button"] {
+  touch-action: manipulation;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #18212B;
+  background: var(--color-ee-bg);
 }
 ::-webkit-scrollbar-thumb {
-  background: #324050;
+  background: var(--color-ee-border);
   border-radius: 3px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #F0A53A;
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Printing (e.g. QR checkpoint cards): never print the dark screen background. */
+@media print {
+  html,
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .punch-btn {
+    box-shadow: none;
+  }
 }

@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Barlow, Barlow_Condensed } from "next/font/google";
 import { PwaRegistrar } from "@/components/shared/PwaRegistrar";
-import { AuthProvider } from "@/context/AuthContext";
+import { AuthProvider } from "@/lib/auth/AuthProvider";
 import { I18nProvider } from "@/lib/i18n/context";
 import "./globals.css";
 
@@ -17,28 +17,24 @@ const barlowCondensed = Barlow_Condensed({
   variable: "--font-barlow-condensed",
 });
 
+// Pinch-zoom stays enabled (no maximumScale / userScalable): guards must be able to enlarge text.
 export const viewport: Viewport = {
-  themeColor: "#18212B",
+  // Same colour as --color-ee-bg in globals.css (the meta tag needs a literal colour value).
+  themeColor: "rgb(24 33 43)",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  viewportFit: "cover"
+  viewportFit: "cover",
 };
 
 export const metadata: Metadata = {
-  title: "Eagle Eye - Security Operations & Patrol System",
-  description: "Mobile-first security patrol management, gate access control, GPS verification and incident reporting system for Aiguille Security & Dawie Boerdery.",
+  title: "Eagle Eye Security",
+  description: "Guard patrols, gate log, incidents and SOS for Aiguille Security and Dawie Boerdery.",
   manifest: "/manifest.json",
-  icons: {
-    icon: "/Eagle_Eye_Logo.jpg",
-    apple: "/Eagle_Eye_Logo.jpg",
-  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Eagle Eye"
-  }
+    title: "Eagle Eye",
+  },
 };
 
 export default function RootLayout({
@@ -48,13 +44,15 @@ export default function RootLayout({
 }) {
   return (
     <html
-      lang="en"
-      className={`${barlow.variable} ${barlowCondensed.variable} h-full antialiased bg-[#18212B] text-[#E9E4D8]`}
+      lang="af"
+      className={`${barlow.variable} ${barlowCondensed.variable} h-full antialiased bg-ee-bg text-ee-text`}
     >
-      <body className="min-h-full flex flex-col bg-[#18212B] text-[#E9E4D8]">
-        <PwaRegistrar />
+      <body className="min-h-full flex flex-col bg-ee-bg text-ee-text font-sans">
         <I18nProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            <PwaRegistrar />
+            {children}
+          </AuthProvider>
         </I18nProvider>
       </body>
     </html>

@@ -1,66 +1,222 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="af">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Offline - Eagle Eye Security</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#18212B">
+  <meta name="robots" content="noindex">
+  <title>Eagle Eye</title>
   <style>
-    body {
-      background-color: #0f172a;
-      color: #f8fafc;
-      font-family: system-ui, -apple-system, sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
+    /* Same palette as the app (src/app/globals.css, from Dawie's original app). */
+    :root {
+      --ee-bg: #18212B;
+      --ee-surface: #212C38;
+      --ee-surface-raised: #2A3746;
+      --ee-border: #324050;
+      --ee-text: #E9E4D8;
+      --ee-muted: #9AA5B1;
+      --ee-primary: #F0A53A;
+      --ee-primary-strong: #C9801C;
+      --ee-on-primary: #2A1A04;
+      --ee-warning: #F0A53A;
+      color-scheme: dark;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
       margin: 0;
-      padding: 24px;
-      text-align: center;
+      min-height: 100%;
+      background: var(--ee-bg);
+      color: var(--ee-text);
+      font-family: "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-size: 17px;
+      line-height: 1.45;
     }
-    .card {
-      background-color: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 16px;
-      padding: 32px 24px;
-      max-width: 400px;
-      width: 100%;
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    body {
+      padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px));
     }
-    .icon {
-      font-size: 48px;
-      margin-bottom: 16px;
-    }
-    h1 {
-      font-size: 22px;
-      font-weight: 700;
-      margin: 0 0 12px;
-    }
-    p {
-      color: #94a3b8;
-      font-size: 15px;
-      line-height: 1.5;
-      margin: 0 0 24px;
-    }
+    main { max-width: 480px; margin: 0 auto; }
+    header { display: flex; align-items: center; gap: 12px; padding: 8px 0 16px; border-bottom: 1px solid var(--ee-border); }
+    header img { width: 48px; height: 48px; border-radius: 8px; }
+    header span { font-family: "Barlow Condensed", "Roboto Condensed", "Arial Narrow", sans-serif; font-weight: 700; font-size: 24px; }
+    .state { display: flex; align-items: center; gap: 8px; margin: 20px 0 4px; color: var(--ee-warning); font-weight: 600; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ee-warning); flex: none; }
+    h1 { font-family: "Barlow Condensed", "Roboto Condensed", "Arial Narrow", sans-serif; font-weight: 700; font-size: 30px; line-height: 1.1; margin: 0 0 12px; }
+    p { margin: 0 0 12px; }
+    .muted { color: var(--ee-muted); }
+    .actions { display: grid; gap: 12px; margin: 24px 0 8px; }
     .btn {
-      background-color: #3b82f6;
-      color: #ffffff;
-      border: none;
-      border-radius: 10px;
-      padding: 14px 24px;
-      font-size: 16px;
-      font-weight: 600;
-      width: 100%;
-      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 56px; width: 100%; padding: 12px 16px;
+      border-radius: 8px; border: 1px solid var(--ee-border);
+      background: var(--ee-surface); color: var(--ee-text);
+      font: inherit; font-weight: 600; text-decoration: none; text-align: center; cursor: pointer;
+      touch-action: manipulation;
     }
+    .btn:hover { background: var(--ee-surface-raised); }
+    .btn.primary { background: var(--ee-primary); border-color: var(--ee-primary); color: var(--ee-on-primary); }
+    .btn.primary:hover { background: var(--ee-primary-strong); border-color: var(--ee-primary-strong); }
+    .btn[disabled] { opacity: .6; cursor: progress; }
+    .btn[hidden] { display: none; }
+    #status { min-height: 1.45em; }
+    .lang { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--ee-border); }
+    .lang button {
+      min-height: 48px; min-width: 48px; padding: 0 14px; border-radius: 8px;
+      border: 1px solid var(--ee-border); background: none; color: var(--ee-muted); font: inherit; cursor: pointer;
+    }
+    .lang button[aria-pressed="true"] { border-color: var(--ee-primary); color: var(--ee-primary); font-weight: 600; }
+    :focus-visible { outline: 3px solid var(--ee-primary); outline-offset: 2px; }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
   </style>
 </head>
 <body>
-  <div class="card">
-    <div class="icon">📡</div>
-    <h1>Working Offline / Vanlyn Modus</h1>
-    <p>You are currently offline. Your patrol scans, incidents, and vehicle records are securely stored locally and will synchronize automatically when connection returns.</p>
-    <button class="btn" onclick="window.location.reload()">Retry Connection</button>
-  </div>
+  <main>
+    <header>
+      <img src="/icon-192.png" alt="" width="48" height="48" onerror="this.remove()">
+      <span>Eagle Eye</span>
+    </header>
+
+    <p class="state" data-testid="pwa-offline-state"><span class="dot" aria-hidden="true"></span><span data-i18n="state">Geen verbinding nie</span></p>
+    <h1 id="offline-title" data-i18n="title">Hierdie skerm is nie op hierdie foon gestoor nie</h1>
+    <p data-i18n="body">Dit kan eers oopmaak wanneer daar weer 'n verbinding is.</p>
+    <p class="muted" data-i18n="saved">Patrollie-skanderings, voorvalle en hekrekords wat reeds op hierdie foon gestoor is, bly op die foon. Hulle word opgelaai die volgende keer as die toep oop is en daar 'n verbinding is.</p>
+
+    <div class="actions">
+      <button id="retry" type="button" class="btn primary" data-testid="pwa-offline-retry" data-i18n="retry">Probeer weer</button>
+      <a id="open-guard" class="btn" href="/guard" hidden data-testid="pwa-offline-open-guard" data-i18n="openGuard">Maak die wagskerm oop</a>
+    </div>
+    <p id="status" class="muted" role="status" aria-live="polite" data-testid="pwa-offline-status"></p>
+
+    <div class="lang" role="group" aria-labelledby="lang-label">
+      <span id="lang-label" class="muted" data-i18n="language" style="width:100%">Taal</span>
+      <button type="button" data-lang="af" lang="af" aria-pressed="false">Afrikaans</button>
+      <button type="button" data-lang="en" lang="en" aria-pressed="false">English</button>
+      <button type="button" data-lang="zu" lang="zu" aria-pressed="false">isiZulu</button>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      'use strict';
+      // Same storage key as the app's language setting (src/lib/i18n/context.tsx).
+      var LANG_KEY = 'eagle_eye_lang_v1';
+      var TEXT = {
+        en: {
+          docTitle: 'No connection - Eagle Eye',
+          state: 'No connection',
+          title: 'This screen is not saved on this phone',
+          body: 'It can only open when there is a connection again.',
+          saved: 'Patrol scans, incidents and gate records already saved on this phone stay on the phone. They upload the next time the app is open and there is a connection.',
+          retry: 'Try again',
+          openGuard: 'Open the guard screen',
+          checking: 'Checking the connection...',
+          stillOffline: 'Still no connection. Try again when you have signal.',
+          language: 'Language'
+        },
+        af: {
+          docTitle: 'Geen verbinding nie - Eagle Eye',
+          state: 'Geen verbinding nie',
+          title: 'Hierdie skerm is nie op hierdie foon gestoor nie',
+          body: "Dit kan eers oopmaak wanneer daar weer 'n verbinding is.",
+          saved: "Patrollie-skanderings, voorvalle en hekrekords wat reeds op hierdie foon gestoor is, bly op die foon. Hulle word opgelaai die volgende keer as die toep oop is en daar 'n verbinding is.",
+          retry: 'Probeer weer',
+          openGuard: 'Maak die wagskerm oop',
+          checking: 'Kyk of daar verbinding is...',
+          stillOffline: 'Steeds geen verbinding nie. Probeer weer wanneer jy sein het.',
+          language: 'Taal'
+        },
+        zu: {
+          docTitle: 'Akukho ukuxhumana - Eagle Eye',
+          state: 'Akukho ukuxhumana',
+          title: 'Lesi sikrini asigcinwanga kule foni',
+          body: 'Singavuleka kuphela uma sekukhona ukuxhumana futhi.',
+          saved: 'Ukuskena kwepatroli, izigameko namarekhodi esango asevele egcinwe kule foni ahlala efonini. Azolayishwa ngokuzayo lapho uhlelo luvuliwe futhi kukhona ukuxhumana.',
+          retry: 'Zama futhi',
+          openGuard: 'Vula isikrini sonogada',
+          checking: 'Kuhlolwa ukuxhumana...',
+          stillOffline: 'Akukabikho ukuxhumana. Zama futhi uma usunesiginali.',
+          language: 'Ulimi'
+        }
+      };
+
+      var lang = 'af';
+      try {
+        var stored = window.localStorage.getItem(LANG_KEY);
+        if (stored === 'en' || stored === 'af' || stored === 'zu') lang = stored;
+      } catch (e) { /* storage unavailable: keep the default */ }
+
+      var statusEl = document.getElementById('status');
+      var retryBtn = document.getElementById('retry');
+      var guardLink = document.getElementById('open-guard');
+      var lastStatusKey = '';
+
+      function t(key) { return (TEXT[lang] && TEXT[lang][key]) || TEXT.en[key] || ''; }
+
+      function render() {
+        document.documentElement.lang = lang;
+        document.title = t('docTitle');
+        var nodes = document.querySelectorAll('[data-i18n]');
+        for (var i = 0; i < nodes.length; i++) nodes[i].textContent = t(nodes[i].getAttribute('data-i18n'));
+        var buttons = document.querySelectorAll('[data-lang]');
+        for (var j = 0; j < buttons.length; j++) {
+          buttons[j].setAttribute('aria-pressed', buttons[j].getAttribute('data-lang') === lang ? 'true' : 'false');
+        }
+        statusEl.textContent = lastStatusKey ? t(lastStatusKey) : '';
+      }
+
+      function setStatus(key) {
+        lastStatusKey = key;
+        statusEl.textContent = key ? t(key) : '';
+      }
+
+      // HEAD requests are not handled by the service worker, so this really asks the server.
+      function checkConnection() {
+        return fetch('/manifest.json', { method: 'HEAD', cache: 'no-store' })
+          .then(function (res) { return res.ok; })
+          .catch(function () { return false; });
+      }
+
+      var checking = false;
+      function retry() {
+        if (checking) return;
+        checking = true;
+        retryBtn.disabled = true;
+        setStatus('checking');
+        checkConnection().then(function (online) {
+          checking = false;
+          retryBtn.disabled = false;
+          if (online) {
+            window.location.reload();
+          } else {
+            setStatus('stillOffline');
+          }
+        });
+      }
+
+      retryBtn.addEventListener('click', retry);
+      window.addEventListener('online', retry);
+
+      var langButtons = document.querySelectorAll('[data-lang]');
+      for (var k = 0; k < langButtons.length; k++) {
+        langButtons[k].addEventListener('click', function (ev) {
+          var next = ev.currentTarget.getAttribute('data-lang');
+          if (!TEXT[next]) return;
+          lang = next;
+          try { window.localStorage.setItem(LANG_KEY, lang); } catch (e) { /* ignore */ }
+          render();
+        });
+      }
+
+      // Offer the guard screen only when it really is saved on this phone and this is not already it.
+      var path = window.location.pathname;
+      var onGuardPath = path === '/guard' || path.indexOf('/guard/') === 0;
+      if (!onGuardPath && window.caches && typeof window.caches.match === 'function') {
+        window.caches.match('/guard').then(function (hit) {
+          if (hit) guardLink.hidden = false;
+        }).catch(function () { /* Cache Storage unavailable */ });
+      }
+
+      render();
+    })();
+  </script>
 </body>
 </html>

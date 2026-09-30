@@ -9,7 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
-    "test:db": "tsx --env-file=.env.local --test \"tests/db/**/*.test.ts\"",
+    "test:db": "tsx --test \"tests/db/**/*.test.ts\"",
     "test:e2e": "playwright test",
     "test:all": "npm run test && npm run test:db"
   },

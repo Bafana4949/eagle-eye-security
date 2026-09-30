@@ -1,710 +1,788 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  Car, 
-  ArrowDownLeft, 
-  ArrowUpRight, 
-  Camera, 
-  Clock, 
-  Check, 
-  FileText,
-  LogOut,
-  MessageSquareShare,
-  Copy
-} from 'lucide-react';
+/**
+ * Vehicle gate: IN / OUT register with South African licence-disc scanning.
+ *
+ * - Identity from useAuth(); the entry belongs to the guard's active shift (shiftStore) and its
+ *   site. Without an open shift nothing can be recorded (reference app: "pick guard first").
+ * - Entries are queued with syncEngine.enqueue (one Dexie transaction incl. the photo) and the
+ *   screen reports the real upload state: saved on this phone → received by server, or the
+ *   server's rejection. WhatsApp is only ever "opened".
+ * - "Vehicles on site" = the site's gate_entries rows without an OUT + entries made on this
+ *   phone (see components/guard/gate/gateLogic.ts). Nothing is invented; an empty list says so.
+ */
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { ArrowDownLeft, ArrowUpRight, Camera, ChevronDown, LogIn, MapPin, ScanLine, Trash2 } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n/context';
-import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import type { TranslationKey } from '@/lib/i18n/translations';
+import { useAuth } from '@/lib/auth/AuthProvider';
+import { getActiveShift, type ActiveShiftRecord } from '@/lib/data/shiftStore';
+import { syncEngine } from '@/lib/offline/sync';
+import { useLocationWatch } from '@/lib/gps/useLocationWatch';
+import { MAX_PLATE_LENGTH, normalizePlate } from '@/lib/license-disc/parser';
+import { formatDuration } from '@/features/shifts/shiftCalculator';
+import type { LicenseDiscData, VehicleDirection } from '@/types/models';
+import type { MediaAttachment } from '@/types/offline';
 import { CameraCaptureModal } from '@/components/shared/CameraCaptureModal';
 import { LicenceDiscScannerModal } from '@/components/guard/LicenceDiscScannerModal';
-import { parseSouthAfricanLicenseDisc } from '@/lib/license-disc/parser';
-import { offlineDB } from '@/lib/offline/db';
-import { syncEngine } from '@/lib/offline/sync';
-import { GateEntry, LicenseDiscData } from '@/types/models';
-import { formatDuration } from '@/features/shifts/shiftCalculator';
-import { useAuth } from '@/context/AuthContext';
-import { 
-  buildVehicleWhatsAppUrl, 
-  formatVehicleWhatsAppMessage,
-  copyVehicleTextToClipboard,
-  GATE_DISPATCH_WHATSAPP_NUMBER, 
-  VehicleNotificationData 
-} from '@/lib/whatsapp/vehicle';
+import { VehiclesOnSiteList, type OnSiteListStatus } from '@/components/guard/gate/VehiclesOnSiteList';
+import { DiscDetails } from '@/components/guard/gate/DiscDetails';
+import { DuplicateInDialog } from '@/components/guard/gate/DuplicateInDialog';
+import { GateResultPanel, type SavedGateEntry } from '@/components/guard/gate/GateResultPanel';
+import { captureGateLocation, loadOnSiteSnapshot, type OnSiteSnapshot } from '@/components/guard/gate/gateData';
+import {
+  EMPTY_GATE_FORM,
+  buildGateEntryPayload,
+  checkPlate,
+  computeVehiclesOnSite,
+  discMatchesPlate,
+  findOnSiteByPlate,
+  formFromDisc,
+  formFromOnSiteVehicle,
+  formatSastStamp,
+  timeOnSiteMs,
+  type GateEntryMethod,
+  type GateFormValues,
+  type GateRecord
+} from '@/components/guard/gate/gateLogic';
+import {
+  inputClass,
+  labelClass,
+  noticeClass,
+  primaryButtonClass,
+  secondaryButtonClass
+} from '@/components/guard/gate/styles';
+
+type ShiftLoad = { status: 'loading' } | { status: 'none' } | { status: 'active'; shift: ActiveShiftRecord };
+
+type FormMessage = { key: TranslationKey; args?: (string | number)[] };
+
+interface PhotoAttachment {
+  blob: Blob;
+  previewUrl: string;
+}
+
+type FocusTarget = { target: 'plate' | 'scan'; seq: number };
+
+const PLATE_INPUT_MAX = MAX_PLATE_LENGTH + 10;
+
+/** <summary> rows: flex hides the native marker, so a chevron shows that they open. */
+const summaryClass =
+  'flex min-h-12 cursor-pointer list-none items-center gap-2 px-3 text-base font-semibold text-ee-text [&::-webkit-details-marker]:hidden';
+const chevronClass = 'h-5 w-5 shrink-0 text-ee-muted group-open:rotate-180 motion-safe:transition-transform';
+
+function vibrate(pattern: number | number[]): void {
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') navigator.vibrate(pattern);
+  } catch {
+    // Vibration is a courtesy only.
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : String(error ?? '');
+}
+
+interface TextFieldProps {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  maxLength: number;
+  testId: string;
+  type?: 'text' | 'tel';
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
+  autoCapitalize?: string;
+}
+
+function TextField({ id, label, value, onChange, maxLength, testId, type = 'text', inputMode, autoCapitalize }: TextFieldProps) {
+  return (
+    <div>
+      <label htmlFor={id} className={labelClass}>
+        {label}
+      </label>
+      <input
+        id={id}
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        maxLength={maxLength}
+        inputMode={inputMode}
+        autoCapitalize={autoCapitalize}
+        autoComplete="off"
+        enterKeyHint="next"
+        data-testid={testId}
+        className={inputClass}
+      />
+    </div>
+  );
+}
 
 export default function GuardGatePage() {
   const { t } = useTranslation();
-  const { user, profile, assignedSite } = useAuth();
+  const auth = useAuth();
+  const userId = auth.status === 'signed_in' ? auth.user?.id ?? null : null;
 
-  // Mode: In or Out
-  const [direction, setDirection] = useState<'in' | 'out'>('in');
-  const [plate, setPlate] = useState('');
-  const [makeModel, setMakeModel] = useState('');
-  const [vehicleColour, setVehicleColour] = useState('');
-  const [driverName, setDriverName] = useState('');
-  const [driverPhone, setDriverPhone] = useState('');
-  const [company, setCompany] = useState('');
-  const [visitReason, setVisitReason] = useState('');
-  const [discData, setDiscData] = useState<LicenseDiscData | null>(null);
+  const [shiftLoad, setShiftLoad] = useState<ShiftLoad>({ status: 'loading' });
+  const [direction, setDirection] = useState<VehicleDirection>('in');
+  const [form, setForm] = useState<GateFormValues>(EMPTY_GATE_FORM);
+  const [disc, setDisc] = useState<LicenseDiscData | null>(null);
+  const [selectedIn, setSelectedIn] = useState<GateRecord | null>(null);
+  const [photo, setPhoto] = useState<PhotoAttachment | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [formMessage, setFormMessage] = useState<FormMessage | null>(null);
+  const [duplicate, setDuplicate] = useState<GateRecord | null>(null);
+  const [saved, setSaved] = useState<SavedGateEntry | null>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [photoOpen, setPhotoOpen] = useState(false);
+  const [snapshot, setSnapshot] = useState<OnSiteSnapshot | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [now, setNow] = useState(0);
+  const [focusRequest, setFocusRequest] = useState<FocusTarget | null>(null);
+  const [moreDetailsOpen, setMoreDetailsOpen] = useState(false);
 
-  // Scanned disc verification modal
-  const [showDiscVerifyModal, setShowDiscVerifyModal] = useState(false);
+  const savingRef = useRef(false);
+  const loadSeqRef = useRef(0);
+  const plateInputRef = useRef<HTMLInputElement | null>(null);
+  const scanButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  const [vehiclePhotoUrl, setVehiclePhotoUrl] = useState<string | null>(null);
-  const [vehiclePhotoBlob, setVehiclePhotoBlob] = useState<Blob | null>(null);
-  const [showPhotoModal, setShowPhotoModal] = useState(false);
-  const [showScannerModal, setShowScannerModal] = useState(false);
+  const shift = shiftLoad.status === 'active' ? shiftLoad.shift : null;
+  // Entries belong to the shift's site; without a shift the active site's list is shown read-only.
+  const siteId = shift?.siteId ?? auth.activeSite?.id ?? null;
+  const site = useMemo(() => {
+    if (!siteId) return null;
+    return auth.sites.find((candidate) => candidate.id === siteId) ?? (auth.activeSite?.id === siteId ? auth.activeSite : null);
+  }, [siteId, auth.sites, auth.activeSite]);
+  const guardName = [auth.profile?.firstName, auth.profile?.lastName].filter(Boolean).join(' ');
 
-  const [vehiclesOnSite, setVehiclesOnSite] = useState<GateEntry[]>([]);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [currentTime, setCurrentTime] = useState<number>(() => (typeof window !== 'undefined' ? Date.now() : 0));
-  const [lastDispatchedWhatsApp, setLastDispatchedWhatsApp] = useState<{
-    url: string;
-    plate: string;
-    direction: 'in' | 'out';
-    message: string;
-  } | null>(null);
+  const gps = useLocationWatch(!!shift);
 
-  // Dynamic Session & Tactical IDs (never hardcoded)
-  const guardId = user?.id || profile?.id || 'e495f1f3-72a0-4231-86fb-617c4624bbe5';
-  const siteId = assignedSite?.id || '22222222-2222-2222-2222-222222222222';
-  const guardName = profile ? `${profile.first_name} ${profile.last_name}` : 'Sipho Khoza';
+  // Clock for "time on site" (SAST labels); 0 until mounted so render stays pure.
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    const first = setTimeout(tick, 0);
+    const interval = setInterval(tick, 30_000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(interval);
+    };
+  }, []);
 
-  const loadVehiclesOnSite = useCallback(async () => {
-    if (offlineDB) {
-      const allEntries = await offlineDB.gateEntries.toArray();
-      const latestMap: Record<string, GateEntry> = {};
+  // The guard's open shift on this phone (the only source of shiftId).
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const active = await getActiveShift(userId);
+        if (!cancelled) setShiftLoad(active ? { status: 'active', shift: active } : { status: 'none' });
+      } catch {
+        if (!cancelled) setShiftLoad({ status: 'none' });
+      }
+    };
+    void check();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void check();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    const unsubscribe = syncEngine?.subscribe(() => void check());
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      unsubscribe?.();
+    };
+  }, [userId]);
 
-      allEntries.forEach((entry) => {
-        const cleanPlate = entry.licensePlate.toUpperCase();
-        if (!latestMap[cleanPlate] || new Date(entry.entryTime) > new Date(latestMap[cleanPlate].entryTime)) {
-          latestMap[cleanPlate] = entry;
-        }
-      });
-
-      const onSite = Object.values(latestMap).filter((e) => e.direction === 'in');
-      setVehiclesOnSite(onSite);
+  const loadVehicles = useCallback(async (targetSiteId: string) => {
+    const seq = ++loadSeqRef.current;
+    try {
+      const next = await loadOnSiteSnapshot(targetSiteId);
+      if (seq === loadSeqRef.current) setSnapshot(next);
+    } catch {
+      if (seq === loadSeqRef.current) {
+        setSnapshot({ siteId: targetSiteId, records: [], source: 'device', serverFailed: true, serverListAt: null });
+      }
+    } finally {
+      if (seq === loadSeqRef.current) setRefreshing(false);
     }
   }, []);
 
+  // Vehicles on site: on open, when back online / visible, and after this phone uploaded something.
   useEffect(() => {
-    let isMounted = true;
-    const fetchVehicles = async () => {
-      if (isMounted) {
-        await loadVehiclesOnSite();
-      }
+    if (!siteId) return;
+    const reload = () => void loadVehicles(siteId);
+    reload();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') reload();
     };
-    void fetchVehicles();
-    const timer = setInterval(() => {
-      if (isMounted) {
-        setCurrentTime(Date.now());
+    window.addEventListener('online', reload);
+    document.addEventListener('visibilitychange', onVisible);
+    let first = true;
+    let lastSync: string | undefined;
+    const unsubscribe = syncEngine?.subscribe((summary) => {
+      const at = summary.lastSyncTimestamp;
+      if (first) {
+        first = false;
+        lastSync = at;
+        return;
       }
-    }, 15000);
+      if (at && at !== lastSync) {
+        lastSync = at;
+        reload();
+      }
+    });
     return () => {
-      isMounted = false;
-      clearInterval(timer);
+      window.removeEventListener('online', reload);
+      document.removeEventListener('visibilitychange', onVisible);
+      unsubscribe?.();
     };
-  }, [loadVehiclesOnSite]);
+  }, [siteId, loadVehicles]);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+  // Focus moves requested by handlers (runs after a closing dialog handed focus back).
+  useEffect(() => {
+    if (!focusRequest) return;
+    if (focusRequest.target === 'plate') plateInputRef.current?.focus();
+    else scanButtonRef.current?.focus();
+  }, [focusRequest]);
+
+  const requestFocus = (target: FocusTarget['target']) => setFocusRequest((prev) => ({ target, seq: (prev?.seq ?? 0) + 1 }));
+
+  const currentSnapshot = snapshot && snapshot.siteId === siteId ? snapshot : null;
+  const vehicles = useMemo(
+    () => (currentSnapshot && now > 0 ? computeVehiclesOnSite(currentSnapshot.records, { now }) : []),
+    [currentSnapshot, now]
+  );
+  const listStatus: OnSiteListStatus = {
+    loading: !currentSnapshot || refreshing || now === 0,
+    source: currentSnapshot?.source ?? null,
+    serverFailed: currentSnapshot?.serverFailed ?? false,
+    serverListAt: currentSnapshot?.serverListAt ?? null
+  };
+  const refreshList = () => {
+    if (!siteId) return;
+    setRefreshing(true);
+    void loadVehicles(siteId);
   };
 
-  // Barcode / Disc Scan Success
-  const handleDiscScanSuccess = (decodedRawText: string) => {
-    setShowScannerModal(false);
-    const parsed = parseSouthAfricanLicenseDisc(decodedRawText);
+  const plate = normalizePlate(form.plate);
+  const plateProblem = checkPlate(form.plate);
+  const onSiteMatch = findOnSiteByPlate(vehicles, form.plate);
+  const linkedIn =
+    direction === 'out' ? (selectedIn && selectedIn.plate === plate ? selectedIn : onSiteMatch) : null;
 
-    if (parsed) {
-      setDiscData(parsed);
-      setPlate(parsed.plate);
-      setMakeModel(`${parsed.make || ''} ${parsed.model || ''}`.trim());
-      setVehicleColour(parsed.colour || '');
-      setShowDiscVerifyModal(true); // Open confirmation dialog for field verification
-    } else {
-      setPlate(decodedRawText.trim().toUpperCase());
-      showToast('Scanned code captured as registration number');
-    }
+  const setField = (field: keyof GateFormValues) => (value: string) => {
+    setForm((prev) => ({ ...prev, [field]: field === 'plate' ? value.toUpperCase() : value }));
+    if (field === 'plate') setFormMessage(null);
   };
 
-  // Fast 1-Tap Record Exit
-  const handleFastRecordExit = async (entry: GateEntry) => {
-    const nowIso = new Date().toISOString();
-    const dwellSeconds = Math.round(
-      (new Date(nowIso).getTime() - new Date(entry.entryTime).getTime()) / 1000
+  const changeDirection = (next: VehicleDirection) => {
+    setDirection(next);
+    setSelectedIn(null);
+    setFormMessage(null);
+  };
+
+  const pickVehicle = (vehicle: GateRecord) => {
+    setSelectedIn(vehicle);
+    setFormMessage(null);
+    setForm((prev) =>
+      formFromOnSiteVehicle(
+        normalizePlate(prev.plate) === vehicle.plate ? prev : { ...prev, makeModel: '', colour: '', driverName: '' },
+        vehicle
+      )
     );
-
-    const exitRecord: GateEntry = {
-      id: crypto.randomUUID(),
-      offlineUuid: crypto.randomUUID(),
-      siteId,
-      guardId,
-      guardName,
-      direction: 'out',
-      licensePlate: entry.licensePlate,
-      makeModel: entry.makeModel,
-      vehicleColour: entry.vehicleColour,
-      driverName: entry.driverName,
-      driverPhone: entry.driverPhone,
-      company: entry.company,
-      visitReason: entry.visitReason,
-      entryTime: entry.entryTime,
-      exitTime: nowIso,
-      dwellDurationSeconds: dwellSeconds,
-      isDiscScanned: entry.isDiscScanned ?? false
-    };
-
-    if (offlineDB) {
-      await offlineDB.gateEntries.add(exitRecord);
-    }
-
-    if (syncEngine) {
-      await syncEngine.enqueue('gate_entry', guardId, siteId, {
-        direction: 'out',
-        licensePlate: entry.licensePlate,
-        makeModel: entry.makeModel,
-        vehicleColour: entry.vehicleColour,
-        entryTime: entry.entryTime,
-        exitTime: nowIso,
-        dwellDurationSeconds: dwellSeconds
-      });
-    }
-
-    // Auto-dispatch WhatsApp notification to 0660179070 with exit info and dwell duration
-    const exitNotification: VehicleNotificationData = {
-      direction: 'out',
-      licensePlate: entry.licensePlate,
-      makeModel: entry.makeModel,
-      vehicleColour: entry.vehicleColour,
-      vinNumber: entry.vinNumber,
-      driverName: entry.driverName,
-      driverPhone: entry.driverPhone,
-      company: entry.company,
-      visitReason: entry.visitReason,
-      entryTime: entry.entryTime,
-      exitTime: nowIso,
-      dwellDurationSeconds: dwellSeconds,
-      isDiscScanned: entry.isDiscScanned,
-      guardName,
-      siteName: assignedSite?.name || 'Dawie Boerdery - Main Gate'
-    };
-
-    const waUrl = buildVehicleWhatsAppUrl(exitNotification);
-    const waMsg = formatVehicleWhatsAppMessage(exitNotification);
-    setLastDispatchedWhatsApp({ url: waUrl, plate: entry.licensePlate, direction: 'out', message: waMsg });
-
-    try {
-      window.open(waUrl, '_blank');
-    } catch {
-      // Handled via user tap button
-    }
-
-    showToast(`✓ Exit recorded: ${entry.licensePlate} · WhatsApp sent to 066 017 9070`);
-    void loadVehiclesOnSite();
+    if (disc && !discMatchesPlate(disc, vehicle.plate)) setDisc(null);
   };
 
-  // Save Entry Form
-  const handleSaveEntry = async () => {
-    const cleanPlate = plate.replace(/\s+/g, '').toUpperCase();
-    if (!cleanPlate) {
-      showToast(t('plateNeed') || 'Please enter or scan vehicle licence plate');
+  const handleDiscRead = (read: LicenseDiscData) => {
+    setScannerOpen(false);
+    setDisc(read);
+    setFormMessage(null);
+    const match = direction === 'out' ? findOnSiteByPlate(vehicles, read.plate) : null;
+    setSelectedIn(match);
+    setForm((prev) => {
+      const base = normalizePlate(prev.plate) === read.plate ? prev : { ...prev, makeModel: '', colour: '' };
+      const fromDisc = formFromDisc(base, read);
+      return match ? formFromOnSiteVehicle(fromDisc, match) : fromDisc;
+    });
+  };
+
+  const handleManualEntry = () => {
+    setScannerOpen(false);
+    requestFocus('plate');
+  };
+
+  const save = async (options: { confirmNewIn?: boolean } = {}) => {
+    if (savingRef.current || !userId || !shift) return;
+    if (plateProblem?.level === 'error') {
+      setFormMessage(
+        plateProblem.code === 'empty' ? { key: 'gatePlateNeeded' } : { key: 'gatePlateTooLong', args: [MAX_PLATE_LENGTH] }
+      );
+      vibrate([90, 60, 90]);
+      requestFocus('plate');
+      return;
+    }
+    if (direction === 'in' && onSiteMatch && !options.confirmNewIn) {
+      setDuplicate(onSiteMatch);
+      return;
+    }
+    if (!syncEngine) {
+      setFormMessage({ key: 'gateSaveFailedGeneric' });
       return;
     }
 
-    const nowIso = new Date().toISOString();
-    let dwellDuration: number | undefined;
-
-    if (direction === 'out') {
-      const priorEntry = vehiclesOnSite.find((v) => v.licensePlate === cleanPlate);
-      if (priorEntry) {
-        dwellDuration = Math.round(
-          (new Date(nowIso).getTime() - new Date(priorEntry.entryTime).getTime()) / 1000
-        );
-      }
-    }
-
-    const gateRecord: GateEntry = {
-      id: crypto.randomUUID(),
-      offlineUuid: crypto.randomUUID(),
-      siteId,
-      guardId,
-      guardName,
-      direction,
-      licensePlate: cleanPlate,
-      makeModel: makeModel.trim() || undefined,
-      vehicleColour: vehicleColour.trim() || undefined,
-      discExpiryDate: discData?.expiryDate,
-      vinNumber: discData?.vin,
-      driverName: driverName.trim() || undefined,
-      driverPhone: driverPhone.trim() || undefined,
-      company: company.trim() || undefined,
-      visitReason: visitReason.trim() || undefined,
-      isDiscScanned: !!discData,
-      entryTime: direction === 'in' ? nowIso : new Date().toISOString(),
-      exitTime: direction === 'out' ? nowIso : undefined,
-      dwellDurationSeconds: dwellDuration,
-      vehiclePhotoUrl: vehiclePhotoUrl || undefined
-    };
-
-    if (offlineDB) {
-      await offlineDB.gateEntries.add(gateRecord);
-    }
-
-    if (syncEngine) {
-      const mediaList = vehiclePhotoBlob
-        ? [{ field: 'photo', blob: vehiclePhotoBlob, fileName: 'vehicle.jpg', mimeType: 'image/jpeg' }]
-        : undefined;
-
-      await syncEngine.enqueue(
-        'gate_entry',
-        guardId,
-        siteId,
-        {
-          direction,
-          licensePlate: cleanPlate,
-          makeModel: makeModel.trim(),
-          vehicleColour: vehicleColour.trim(),
-          discExpiryDate: discData?.expiryDate,
-          vinNumber: discData?.vin,
-          driverName: driverName.trim(),
-          driverPhone: driverPhone.trim(),
-          company: company.trim(),
-          visitReason: visitReason.trim(),
-          isDiscScanned: !!discData,
-          entryTime: gateRecord.entryTime,
-          exitTime: gateRecord.exitTime,
-          dwellDurationSeconds: dwellDuration
-        },
-        mediaList
-      );
-    }
-
-    // Auto-dispatch WhatsApp notification to 0660179070 with all scanned car info
-    const vehicleNotification: VehicleNotificationData = {
-      direction,
-      licensePlate: cleanPlate,
-      makeModel: makeModel.trim() || undefined,
-      vehicleColour: vehicleColour.trim() || undefined,
-      vinNumber: discData?.vin,
-      engineNumber: discData?.engineNumber,
-      discExpiryDate: discData?.expiryDate,
-      isDiscExpired: discData?.isExpired,
-      isDiscScanned: !!discData,
-      driverName: driverName.trim() || undefined,
-      driverPhone: driverPhone.trim() || undefined,
-      company: company.trim() || undefined,
-      visitReason: visitReason.trim() || undefined,
-      entryTime: gateRecord.entryTime,
-      exitTime: gateRecord.exitTime,
-      dwellDurationSeconds: dwellDuration,
-      guardName,
-      siteName: assignedSite?.name || 'Dawie Boerdery - Main Gate'
-    };
-
-    const waUrl = buildVehicleWhatsAppUrl(vehicleNotification);
-    const waMsg = formatVehicleWhatsAppMessage(vehicleNotification);
-    setLastDispatchedWhatsApp({ url: waUrl, plate: cleanPlate, direction, message: waMsg });
-
+    savingRef.current = true;
+    setSaving(true);
+    setFormMessage(null);
+    const snapshotForm = form;
+    const snapshotDisc = disc;
+    const snapshotLinked = linkedIn;
+    const snapshotPhoto = photo;
+    const snapshotDirection = direction;
+    const pickedFromList = !!(snapshotLinked && selectedIn && snapshotLinked.id === selectedIn.id);
     try {
-      window.open(waUrl, '_blank');
-    } catch {
-      // Handled via user tap button
+      const location = await captureGateLocation();
+      const recordedAt = Date.now();
+      const payload = buildGateEntryPayload({
+        direction: snapshotDirection,
+        form: snapshotForm,
+        disc: snapshotDisc,
+        shiftId: shift.shiftId,
+        location,
+        now: recordedAt,
+        linkedIn: snapshotLinked
+      });
+      const media: MediaAttachment[] = snapshotPhoto
+        ? [{ field: 'photo', blob: snapshotPhoto.blob, mimeType: snapshotPhoto.blob.type || 'image/jpeg' }]
+        : [];
+      const eventId = await syncEngine.enqueue(
+        'gate_entry',
+        { userId, organisationId: shift.organisationId, siteId: shift.siteId },
+        payload,
+        media
+      );
+      const method: GateEntryMethod = payload.isDiscScanned ? 'disc' : pickedFromList ? 'list' : 'manual';
+      setSaved({ eventId, payload, method, recordedAt, photo: snapshotPhoto?.blob ?? null });
+      vibrate(250);
+      void loadVehicles(shift.siteId);
+    } catch (error) {
+      const message = errorText(error);
+      setFormMessage(message ? { key: 'gateSaveFailed', args: [message] } : { key: 'gateSaveFailedGeneric' });
+      vibrate([90, 60, 90]);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
-
-    showToast(`${t('vehicleSaved')} (${direction.toUpperCase()} - ${cleanPlate}) · WhatsApp sent to 066 017 9070`);
-
-    // Reset Form
-    setPlate('');
-    setMakeModel('');
-    setVehicleColour('');
-    setDriverName('');
-    setDriverPhone('');
-    setCompany('');
-    setVisitReason('');
-    setDiscData(null);
-    setVehiclePhotoUrl(null);
-    setVehiclePhotoBlob(null);
-
-    void loadVehiclesOnSite();
   };
 
+  const startNewEntry = () => {
+    setSaved(null);
+    setForm(EMPTY_GATE_FORM);
+    setDisc(null);
+    setPhoto(null);
+    setSelectedIn(null);
+    setFormMessage(null);
+    setMoreDetailsOpen(false);
+    requestFocus('scan');
+  };
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+
+  const heading = (
+    <header>
+      <h1 className="font-display text-2xl font-bold uppercase tracking-wide text-ee-text">{t('gateTitle')}</h1>
+      {site && (
+        <p data-testid="gate-site" className="text-sm text-ee-muted">
+          {t('gateShiftSite', site.name)}
+        </p>
+      )}
+    </header>
+  );
+
+  if (auth.status === 'loading' || (userId && shiftLoad.status === 'loading')) {
+    return (
+      <div className="space-y-4">
+        {heading}
+        <p role="status" data-testid="gate-loading" className="text-ee-muted">
+          {t('gateLoading')}
+        </p>
+      </div>
+    );
+  }
+
+  if (!userId) {
+    return (
+      <div className="space-y-4">
+        {heading}
+        <p data-testid="gate-signed-out" className={noticeClass.warning}>
+          {t('gateSignedOut')}
+        </p>
+      </div>
+    );
+  }
+
+  const gpsFix = gps.fix && gps.fix.status === 'ok' && Number.isFinite(gps.fix.accuracy) ? gps.fix : null;
+  const gpsLine: { key: TranslationKey; args: (string | number)[]; tone: string } = gpsFix
+    ? { key: 'gateGpsReady', args: [Math.round(gpsFix.accuracy)], tone: 'text-ee-muted' }
+    : gps.error || gps.fix
+      ? { key: 'gateGpsNone', args: [], tone: 'text-ee-warning' }
+      : { key: 'gateGpsWaiting', args: [], tone: 'text-ee-muted' };
+
+  const plateNotes: Array<{ key: TranslationKey; args: (string | number)[]; tone: keyof typeof noticeClass; testId: string }> = [];
+  if (plate !== '' && plateProblem) {
+    if (plateProblem.code === 'too_long') {
+      plateNotes.push({ key: 'gatePlateTooLong', args: [MAX_PLATE_LENGTH], tone: 'danger', testId: 'gate-plate-problem' });
+    } else if (plateProblem.code === 'unusual_chars') {
+      plateNotes.push({ key: 'gatePlateUnusualChars', args: [], tone: 'warning', testId: 'gate-plate-problem' });
+    } else if (plateProblem.code === 'unusual_length') {
+      plateNotes.push({ key: 'gatePlateUnusualLength', args: [], tone: 'warning', testId: 'gate-plate-problem' });
+    }
+  }
+  if (plate !== '' && direction === 'in' && onSiteMatch) {
+    plateNotes.push({
+      key: 'gateAlreadyOnSite',
+      args: [onSiteMatch.displayPlate, formatSastStamp(onSiteMatch.entryTime, now)],
+      tone: 'warning',
+      testId: 'gate-already-on-site'
+    });
+  }
+  if (plate !== '' && direction === 'out' && plateProblem?.level !== 'error') {
+    if (linkedIn) {
+      plateNotes.push({
+        key: 'gateOutLinked',
+        args: [formatSastStamp(linkedIn.entryTime, now), formatDuration(timeOnSiteMs(linkedIn.entryTime, now))],
+        tone: 'info',
+        testId: 'gate-out-linked'
+      });
+    } else if (currentSnapshot) {
+      plateNotes.push({ key: 'gateOutNoInRecord', args: [plate], tone: 'warning', testId: 'gate-out-no-in' });
+    }
+  }
+
   return (
-    <div className="space-y-4 max-w-lg mx-auto pb-6">
-      {/* Toast Alert in Dawie Palette */}
-      {toastMessage && (
-        <div className="fixed top-16 left-4 right-4 z-50 p-3.5 bg-[#212C38] border border-[#F0A53A] text-[#F0A53A] font-bold text-xs rounded-2xl shadow-2xl text-center animate-in slide-in-from-top-4 duration-150">
-          {toastMessage}
-        </div>
+    <div className="space-y-4 pb-6" data-testid="gate-page">
+      {heading}
+
+      {!siteId && (
+        <p data-testid="gate-no-site" className={noticeClass.warning}>
+          {t('gateNoSite')}
+        </p>
       )}
 
-      {/* Direction Segment Switcher */}
-      <div className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-[#212C38] border border-[#324050]">
-        <button
-          onClick={() => setDirection('in')}
-          className={`py-3.5 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${
-            direction === 'in'
-              ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold'
-              : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
-          }`}
-        >
-          <ArrowDownLeft className="w-5 h-5 text-[#2A1A04]" />
-          <span>{t('vehicleIn')}</span>
-        </button>
-
-        <button
-          onClick={() => setDirection('out')}
-          className={`py-3.5 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${
-            direction === 'out'
-              ? 'bg-[#76C08F] text-[#18212B] shadow-md font-bold'
-              : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
-          }`}
-        >
-          <ArrowUpRight className="w-5 h-5 text-[#18212B]" />
-          <span>{t('vehicleOut')}</span>
-        </button>
-      </div>
-
-      {/* Active WhatsApp Dispatch Banner for 0660179070 */}
-      {lastDispatchedWhatsApp && (
-        <div className="p-3.5 rounded-2xl bg-[#25D366]/15 border border-[#25D366]/50 flex items-center justify-between gap-3 shadow-lg animate-in slide-in-from-top-2">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#25D366] text-black flex items-center justify-center font-bold shrink-0">
-              <MessageSquareShare className="w-5 h-5 text-black" />
-            </div>
-            <div>
-              <span className="text-xs font-bold text-white block">
-                WhatsApp Dispatch: 066 017 9070
-              </span>
-              <span className="text-[11px] text-[#76C08F] font-mono font-semibold">
-                {lastDispatchedWhatsApp.plate} · {lastDispatchedWhatsApp.direction === 'in' ? 'ENTRY' : 'EXIT'}
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              onClick={async () => {
-                if (lastDispatchedWhatsApp?.message) {
-                  await navigator.clipboard.writeText(lastDispatchedWhatsApp.message);
-                  showToast('✓ Message with emojis copied to clipboard!');
-                }
-              }}
-              className="p-2 rounded-xl bg-[#212C38] border border-[#324050] text-[#E9E4D8] hover:text-[#F0A53A] font-bold text-xs flex items-center gap-1"
-              title="Copy message text with emojis"
-            >
-              <Copy className="w-4 h-4 text-[#F0A53A]" />
-              <span className="hidden sm:inline text-[11px]">Copy</span>
-            </button>
-            <a
-              href={lastDispatchedWhatsApp.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3 py-2 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-black font-bold text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition-transform"
-            >
-              <span>Open WhatsApp</span>
-            </a>
-          </div>
-        </div>
+      {shift && site && auth.activeSite && auth.activeSite.id !== shift.siteId && (
+        <p data-testid="gate-site-mismatch" className={noticeClass.info}>
+          {t('gateShiftSiteMismatch', site.name)}
+        </p>
       )}
 
-      {/* Persistent WhatsApp Target Indicator */}
-      <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#18212B] border border-[#324050] text-[11px]">
-        <div className="flex items-center gap-2 text-[#9AA5B1]">
-          <MessageSquareShare className="w-4 h-4 text-[#25D366]" />
-          <span>Auto-dispatch destination:</span>
-        </div>
-        <span className="font-mono font-bold text-[#F0A53A]">066 017 9070</span>
-      </div>
+      {!shift && (
+        <>
+          <section
+            aria-labelledby="gate-need-shift-heading"
+            data-testid="gate-need-shift"
+            className="rounded-lg border border-ee-warning/40 bg-ee-surface p-4"
+          >
+            <h2 id="gate-need-shift-heading" className="font-display text-xl font-bold uppercase tracking-wide text-ee-warning">
+              {t('gateNeedShiftTitle')}
+            </h2>
+            <p className="mt-1 text-base text-ee-text">{t('gateNeedShiftBody')}</p>
+            {/* text colour needs `!`: the unlayered global `a { color }` in globals.css beats utilities */}
+            <Link href="/guard" data-testid="gate-go-home" className={`mt-3 ${primaryButtonClass} text-ee-on-primary!`}>
+              <LogIn className="h-5 w-5" aria-hidden="true" />
+              <span>{t('gateGoHome')}</span>
+            </Link>
+          </section>
+          {siteId && (
+            <section aria-labelledby="gate-onsite-heading">
+              <h2 id="gate-onsite-heading" className="mb-2 text-base font-semibold text-ee-text">
+                {t('gateOnSiteTitle')}
+              </h2>
+              <VehiclesOnSiteList vehicles={vehicles} now={now} status={listStatus} onRefresh={refreshList} />
+            </section>
+          )}
+        </>
+      )}
 
-      {/* Vehicles Currently On Premises (High Visibility Section) */}
-      <Card className="rounded-3xl border-[#324050] bg-[#212C38] p-4">
-        <div className="flex items-center justify-between mb-3 pb-2 border-b border-[#324050]">
-          <div className="flex items-center gap-2">
-            <Car className="w-5 h-5 text-[#F0A53A]" />
-            <span className="text-sm font-bold text-[#E9E4D8]">Vehicles on Premises</span>
-          </div>
-          <Badge variant={vehiclesOnSite.length > 0 ? 'warning' : 'neutral'}>
-            {vehiclesOnSite.length} Inside
-          </Badge>
-        </div>
+      {shift && saved && (
+        <GateResultPanel
+          saved={saved}
+          guardName={guardName}
+          siteName={site?.name ?? null}
+          whatsappNumber={site?.whatsappDispatchNumber}
+          onNewEntry={startNewEntry}
+        />
+      )}
 
-        {vehiclesOnSite.length === 0 ? (
-          <p className="text-xs text-[#9AA5B1] text-center py-4">No vehicles logged inside premises</p>
-        ) : (
-          <div className="space-y-2.5 max-h-56 overflow-y-auto">
-            {vehiclesOnSite.map((v) => {
-              const dwellMs = currentTime > 0 ? Math.max(0, currentTime - new Date(v.entryTime).getTime()) : 0;
-
+      {shift && !saved && (
+        <>
+          <div
+            role="group"
+            aria-label={t('gateDirectionLabel')}
+            className="grid grid-cols-2 gap-1 rounded-lg border border-ee-border bg-ee-surface p-1"
+          >
+            {(['in', 'out'] as const).map((value) => {
+              const active = direction === value;
+              const Icon = value === 'in' ? ArrowDownLeft : ArrowUpRight;
               return (
-                <div
-                  key={v.id}
-                  className="p-3 rounded-2xl bg-[#18212B] border border-[#324050] flex items-center justify-between gap-2"
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => changeDirection(value)}
+                  aria-pressed={active}
+                  data-testid={`gate-direction-${value}`}
+                  className={`flex min-h-14 min-w-0 items-center justify-center gap-1.5 rounded-md px-1 font-display text-xl font-bold uppercase tracking-wide ${
+                    active ? 'bg-ee-primary text-ee-on-primary' : 'text-ee-muted hover:bg-ee-surface-raised hover:text-ee-text'
+                  }`}
                 >
-                  <div>
-                    <span className="font-mono font-black text-[#E9E4D8] text-base block">{v.licensePlate}</span>
-                    <span className="text-xs text-[#9AA5B1]">
-                      {[v.makeModel, v.driverName].filter(Boolean).join(' · ')}
-                    </span>
-                    <div className="flex items-center gap-1 text-[11px] text-[#F0A53A] font-mono mt-0.5">
-                      <Clock className="w-3 h-3" />
-                      <span>Dwell: {formatDuration(dwellMs)}</span>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => void handleFastRecordExit(v)}
-                    className="px-3.5 py-2 rounded-xl bg-[#76C08F] hover:bg-[#68B080] text-[#18212B] font-bold text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition-transform"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    <span>Record Exit</span>
-                  </button>
-                </div>
+                  <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+                  <span>{t(value === 'in' ? 'gateIn' : 'gateOut')}</span>
+                </button>
               );
             })}
           </div>
-        )}
-      </Card>
 
-      {/* Primary Scanner Action in Dawie Amber Punch */}
-      <button
-        onClick={() => setShowScannerModal(true)}
-        className="w-full py-4 px-5 rounded-2xl bg-radial from-[#FFC76A] via-[#F0A53A] to-[#C9801C] hover:brightness-105 active:scale-[0.98] text-[#2A1A04] font-bold text-base flex items-center justify-center gap-2 shadow-xl shadow-[#F0A53A]/20 border border-[#F0A53A] transition-all"
-      >
-        <Car className="w-6 h-6 stroke-[2.5]" />
-        <span>{t('scanDisc')}</span>
-      </button>
-
-      {/* Entry / Log Form */}
-      <Card className="rounded-3xl border-[#324050] bg-[#212C38] p-4">
-        <CardHeader className="mb-3">
-          <CardTitle className="text-sm font-bold text-[#E9E4D8]">
-            {direction === 'in' ? 'Log Vehicle Entry' : 'Log Vehicle Exit'}
-          </CardTitle>
-          {discData && (
-            <Badge variant={discData.isExpired ? 'danger' : 'success'}>
-              {discData.isExpired ? 'DISC EXPIRED' : 'DISC VERIFIED'}
-            </Badge>
+          {direction === 'out' ? (
+            <section aria-labelledby="gate-onsite-heading">
+              <h2 id="gate-onsite-heading" className="mb-2 text-base font-semibold text-ee-text">
+                {t('gateOnSitePick')}
+              </h2>
+              <VehiclesOnSiteList
+                vehicles={vehicles}
+                now={now}
+                status={listStatus}
+                onRefresh={refreshList}
+                onPick={pickVehicle}
+                selectedId={linkedIn?.id ?? null}
+              />
+              <p className="mt-3 text-sm text-ee-muted">{t('gateOrScan')}</p>
+            </section>
+          ) : (
+            <details data-testid="gate-onsite-summary" className="group rounded-lg border border-ee-border bg-ee-surface">
+              <summary className={summaryClass}>
+                <span className="flex-1">
+                  {listStatus.loading && vehicles.length === 0
+                    ? t('gateOnSiteLoading')
+                    : t('gateOnSiteCount', vehicles.length)}
+                </span>
+                <ChevronDown className={chevronClass} aria-hidden="true" />
+              </summary>
+              <div className="border-t border-ee-border p-3">
+                <VehiclesOnSiteList vehicles={vehicles} now={now} status={listStatus} onRefresh={refreshList} />
+              </div>
+            </details>
           )}
-        </CardHeader>
 
-        <div className="space-y-3">
-          {/* Plate Number */}
-          <div>
-            <label className="text-xs font-bold text-[#9AA5B1] block mb-1">
-              Vehicle Registration / Plate *
-            </label>
-            <input
-              type="text"
-              value={plate}
-              onChange={(e) => setPlate(e.target.value.toUpperCase())}
-              placeholder="e.g. ABC 123 GP / MP"
-              className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-4 py-3 text-lg font-mono font-bold text-[#E9E4D8] uppercase focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
+          <button
+            ref={scanButtonRef}
+            type="button"
+            onClick={() => setScannerOpen(true)}
+            data-testid="gate-scan-disc"
+            className={primaryButtonClass}
+          >
+            <ScanLine className="h-6 w-6" aria-hidden="true" />
+            <span>{t('gateScanDisc')}</span>
+          </button>
+
+          {disc && <DiscDetails disc={disc} plate={form.plate} onDiscard={() => setDisc(null)} />}
+
+          <div className="space-y-3">
+            <div>
+              <label htmlFor="gate-plate" className={labelClass}>
+                {t('gatePlateLabel')}
+              </label>
+              <input
+                id="gate-plate"
+                ref={plateInputRef}
+                type="text"
+                value={form.plate}
+                onChange={(event) => setField('plate')(event.target.value)}
+                maxLength={PLATE_INPUT_MAX}
+                autoCapitalize="characters"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="next"
+                required
+                aria-required="true"
+                aria-invalid={formMessage?.key === 'gatePlateNeeded' || plateProblem?.code === 'too_long'}
+                aria-describedby="gate-plate-notes"
+                data-testid="gate-plate"
+                className={`${inputClass} min-h-14 font-display text-2xl font-bold uppercase tracking-wider`}
+              />
+              <div id="gate-plate-notes" aria-live="polite" className="mt-2 space-y-2 empty:mt-0">
+                {plateNotes.map((note) => (
+                  <p key={note.key} data-testid={note.testId} className={noticeClass[note.tone]}>
+                    {t(note.key, ...note.args)}
+                  </p>
+                ))}
+              </div>
+            </div>
+
+            <TextField
+              id="gate-make-model"
+              label={t('gateMakeModel')}
+              value={form.makeModel}
+              onChange={setField('makeModel')}
+              maxLength={100}
+              testId="gate-make-model"
             />
-          </div>
-
-          {/* Make & Model + Colour */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-[#9AA5B1] block mb-1">
-                Make & Model
-              </label>
-              <input
-                type="text"
-                value={makeModel}
-                onChange={(e) => setMakeModel(e.target.value)}
-                placeholder="Toyota Hilux"
-                className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-3 py-2.5 text-xs text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-[#9AA5B1] block mb-1">
-                Colour
-              </label>
-              <input
-                type="text"
-                value={vehicleColour}
-                onChange={(e) => setVehicleColour(e.target.value)}
-                placeholder="White"
-                className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-3 py-2.5 text-xs text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
-              />
-            </div>
-          </div>
-
-          {/* Driver & Company */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-[#9AA5B1] block mb-1">
-                Driver Name
-              </label>
-              <input
-                type="text"
-                value={driverName}
-                onChange={(e) => setDriverName(e.target.value)}
-                placeholder="Driver name"
-                className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-3 py-2.5 text-xs text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-[#9AA5B1] block mb-1">
-                Company / Reason
-              </label>
-              <input
-                type="text"
-                value={company}
-                onChange={(e) => setCompany(e.target.value)}
-                placeholder="Feed Delivery / Vet"
-                className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-3 py-2.5 text-xs text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
-              />
-            </div>
-          </div>
-
-          {/* Vehicle Photograph */}
-          <div className="pt-1">
-            {vehiclePhotoUrl ? (
-              <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-[#18212B] border border-[#324050]">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={vehiclePhotoUrl}
-                  alt="Vehicle capture"
-                  className="w-12 h-12 object-cover rounded-xl"
+            <TextField
+              id="gate-colour"
+              label={t('gateColour')}
+              value={form.colour}
+              onChange={setField('colour')}
+              maxLength={50}
+              testId="gate-colour"
+            />
+            <TextField
+              id="gate-driver-name"
+              label={t('gateDriverName')}
+              value={form.driverName}
+              onChange={setField('driverName')}
+              maxLength={255}
+              autoCapitalize="words"
+              testId="gate-driver-name"
+            />
+            {direction === 'in' && (
+              <>
+                <TextField
+                  id="gate-visit-reason"
+                  label={t('gateVisitReason')}
+                  value={form.visitReason}
+                  onChange={setField('visitReason')}
+                  maxLength={500}
+                  autoCapitalize="sentences"
+                  testId="gate-visit-reason"
                 />
-                <div className="flex-1">
-                  <span className="text-xs font-bold text-[#76C08F] block">Photo attached</span>
-                  <button
-                    onClick={() => {
-                      setVehiclePhotoUrl(null);
-                      setVehiclePhotoBlob(null);
-                    }}
-                    className="text-[11px] text-[#E0685C] hover:underline"
-                  >
-                    Remove
-                  </button>
-                </div>
+                {/* Less-used fields stay one tap away so the everyday form stays as short as Dawie's. */}
+                <details
+                  data-testid="gate-more-details"
+                  open={moreDetailsOpen}
+                  onToggle={(event) => setMoreDetailsOpen(event.currentTarget.open)}
+                  className="group rounded-lg border border-ee-border bg-ee-surface"
+                >
+                  <summary className={summaryClass}>
+                    <span className="flex-1">{t('gateMoreDetails')}</span>
+                    <ChevronDown className={chevronClass} aria-hidden="true" />
+                  </summary>
+                  <div className="space-y-3 border-t border-ee-border p-3">
+                    <TextField
+                      id="gate-driver-phone"
+                      label={t('gateDriverPhone')}
+                      value={form.driverPhone}
+                      onChange={setField('driverPhone')}
+                      maxLength={50}
+                      type="tel"
+                      inputMode="tel"
+                      testId="gate-driver-phone"
+                    />
+                    <TextField
+                      id="gate-company"
+                      label={t('gateCompany')}
+                      value={form.company}
+                      onChange={setField('company')}
+                      maxLength={255}
+                      autoCapitalize="words"
+                      testId="gate-company"
+                    />
+                    <TextField
+                      id="gate-person-visited"
+                      label={t('gatePersonVisited')}
+                      value={form.personVisited}
+                      onChange={setField('personVisited')}
+                      maxLength={255}
+                      autoCapitalize="words"
+                      testId="gate-person-visited"
+                    />
+                  </div>
+                </details>
+              </>
+            )}
+
+            {photo ? (
+              <div data-testid="gate-photo-preview" className="flex items-center gap-3 rounded-lg border border-ee-border bg-ee-surface p-2">
+                {/* eslint-disable-next-line @next/next/no-img-element -- local data URL preview */}
+                <img src={photo.previewUrl} alt={t('gatePhotoAlt')} className="h-16 w-16 shrink-0 rounded object-cover" />
+                <span className="flex-1 text-sm font-semibold text-ee-success">{t('gatePhotoAttached')}</span>
+                <button
+                  type="button"
+                  onClick={() => setPhoto(null)}
+                  aria-label={t('gatePhotoRemove')}
+                  data-testid="gate-photo-remove"
+                  className="grid min-h-12 min-w-12 place-items-center rounded-lg text-ee-danger hover:bg-ee-surface-raised"
+                >
+                  <Trash2 className="h-5 w-5" aria-hidden="true" />
+                </button>
               </div>
             ) : (
-              <button
-                onClick={() => setShowPhotoModal(true)}
-                className="w-full py-3.5 px-4 rounded-xl bg-[#212C38] hover:bg-[#283644] border border-[#324050] text-[#E9E4D8] text-xs font-bold flex items-center justify-center gap-2"
-              >
-                <Camera className="w-5 h-5 text-[#F0A53A]" />
-                <span>Take Vehicle Photo</span>
+              <button type="button" onClick={() => setPhotoOpen(true)} data-testid="gate-photo-add" className={secondaryButtonClass}>
+                <Camera className="h-5 w-5" aria-hidden="true" />
+                <span>{t('gatePhotoAdd')}</span>
               </button>
             )}
-          </div>
 
-          {/* Save Action Button */}
-          <div className="pt-2">
-            <Button
-              onClick={() => void handleSaveEntry()}
-              variant="primary"
-              size="touch"
-              className="w-full font-bold shadow-lg shadow-[#F0A53A]/20"
+            <p data-testid="gate-gps-status" className={`flex items-center gap-2 text-sm ${gpsLine.tone}`}>
+              <MapPin className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{t(gpsLine.key, ...gpsLine.args)}</span>
+            </p>
+
+            {formMessage && (
+              <p role="alert" data-testid="gate-form-error" className={`break-words ${noticeClass.danger}`}>
+                {t(formMessage.key, ...(formMessage.args ?? []))}
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={saving}
+              aria-busy={saving}
+              data-testid="gate-save"
+              className={primaryButtonClass}
             >
-              <span>{direction === 'in' ? 'Save Vehicle Entry' : 'Save Vehicle Exit'}</span>
-            </Button>
+              {saving ? t('gateSaving') : t(direction === 'in' ? 'gateSaveIn' : 'gateSaveOut')}
+            </button>
           </div>
-        </div>
-      </Card>
-
-      {/* Editable Scanned Disc Confirmation Modal */}
-      {showDiscVerifyModal && discData && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-[#212C38] border-2 border-[#F0A53A] rounded-3xl max-w-sm w-full p-5 shadow-2xl">
-            <div className="flex items-center gap-2 mb-3">
-              <FileText className="w-5 h-5 text-[#F0A53A]" />
-              <h3 className="text-base font-bold text-[#E9E4D8]">Confirm Scanned Disc Data</h3>
-            </div>
-
-            <div className="space-y-2.5 text-xs text-[#9AA5B1]">
-              <div>
-                <label className="text-[10px] uppercase font-bold text-[#9AA5B1] block">Registration</label>
-                <input
-                  type="text"
-                  value={plate}
-                  onChange={(e) => setPlate(e.target.value.toUpperCase())}
-                  className="w-full bg-[#18212B] border border-[#324050] rounded-lg p-2 font-mono font-bold text-[#E9E4D8] uppercase focus:outline-none focus:border-[#F0A53A]"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] uppercase font-bold text-[#9AA5B1] block">Make & Model</label>
-                  <input
-                    type="text"
-                    value={makeModel}
-                    onChange={(e) => setMakeModel(e.target.value)}
-                    className="w-full bg-[#18212B] border border-[#324050] rounded-lg p-2 text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A]"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] uppercase font-bold text-[#9AA5B1] block">Colour</label>
-                  <input
-                    type="text"
-                    value={vehicleColour}
-                    onChange={(e) => setVehicleColour(e.target.value)}
-                    className="w-full bg-[#18212B] border border-[#324050] rounded-lg p-2 text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A]"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[10px] uppercase font-bold text-slate-500 block">VIN Number</label>
-                <span className="font-mono text-slate-400 block p-1.5 bg-slate-950 rounded-lg">
-                  {discData.vin || 'Not detected'}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between p-2 rounded-xl bg-slate-950 border border-slate-800">
-                <span className="text-slate-400">Disc Expiry:</span>
-                <span className={`font-bold ${discData.isExpired ? 'text-rose-400' : 'text-emerald-400'}`}>
-                  {discData.expiryDate || 'N/A'} {discData.isExpired ? '(EXPIRED)' : ''}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2 p-2 rounded-xl bg-[#25D366]/10 border border-[#25D366]/30 text-[#76C08F] text-[11px]">
-                <MessageSquareShare className="w-4 h-4 text-[#25D366] shrink-0" />
-                <span>Auto-dispatches all scanned car details to WhatsApp <strong>066 017 9070</strong>.</span>
-              </div>
-            </div>
-
-            <div className="mt-4 pt-3 border-t border-slate-800 flex gap-2">
-              <Button
-                onClick={() => setShowDiscVerifyModal(false)}
-                variant="primary"
-                size="sm"
-                className="w-full gap-1.5"
-              >
-                <Check className="w-4 h-4" />
-                <span>Confirm Information</span>
-              </Button>
-            </div>
-          </div>
-        </div>
+        </>
       )}
 
-      {/* Modals */}
+      {duplicate && (
+        <DuplicateInDialog
+          plate={duplicate.displayPlate}
+          since={formatSastStamp(duplicate.entryTime, now)}
+          onCancel={() => setDuplicate(null)}
+          onRecordOut={() => {
+            const vehicle = duplicate;
+            setDuplicate(null);
+            setDirection('out');
+            pickVehicle(vehicle);
+          }}
+          onConfirmNewIn={() => {
+            setDuplicate(null);
+            void save({ confirmNewIn: true });
+          }}
+        />
+      )}
+
       <LicenceDiscScannerModal
-        isOpen={showScannerModal}
-        onClose={() => setShowScannerModal(false)}
-        onScanSuccess={handleDiscScanSuccess}
-        onManualEntryFallback={() => {
-          setShowScannerModal(false);
-          // Focus or keep direction as In
-        }}
+        isOpen={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onDiscRead={handleDiscRead}
+        onManualEntry={handleManualEntry}
       />
 
       <CameraCaptureModal
-        isOpen={showPhotoModal}
-        onClose={() => setShowPhotoModal(false)}
-        onCapture={(blob, url) => {
-          setVehiclePhotoBlob(blob);
-          setVehiclePhotoUrl(url);
-          setShowPhotoModal(false);
+        isOpen={photoOpen}
+        onClose={() => setPhotoOpen(false)}
+        onCapture={(blob, previewUrl) => {
+          setPhoto({ blob, previewUrl });
+          setPhotoOpen(false);
         }}
-        title="Vehicle Evidence Photograph"
+        facingMode="environment"
+        title={t('gatePhotoTitle')}
+        testIdPrefix="gate-camera"
       />
     </div>
   );

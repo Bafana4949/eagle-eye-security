@@ -8,6 +8,11 @@ export type AlertStatus = 'active' | 'acknowledged' | 'resolved';
 export type ScanMethod = 'qr' | 'nfc' | 'manual';
 export type VehicleDirection = 'in' | 'out';
 export type SupportedLanguage = 'en' | 'af' | 'zu';
+/** Server-authoritative GPS confidence (identical rules in the SQL trigger and src/lib/gps/haversine.ts). */
+export type GpsConfidence = 'verified' | 'likely' | 'low_confidence' | 'outside' | 'no_fix' | 'no_reference';
+export type GpsErrorKind = 'permission_denied' | 'timeout' | 'unavailable' | 'unsupported' | 'insecure' | 'stale';
+export type CheckpointPayloadType = 'secure_token' | 'legacy_qr' | 'nfc_uid' | 'manual';
+export type EvidenceCategory = 'selfie' | 'incident' | 'vehicle' | 'patrol';
 
 export interface Organisation {
   id: string;
@@ -39,6 +44,11 @@ export interface Site {
   policePhone: string;
   whatsappDispatchNumber?: string;
   isActive: boolean;
+  /**
+   * Whether Dawie's printed PLAAS-CP:<code> cards may still be scanned on this site
+   * (sites.allow_legacy_qr). Those codes are public, so such scans are never payload-verified.
+   */
+  allowLegacyQr: boolean;
 }
 
 export interface UserProfile {
@@ -54,18 +64,36 @@ export interface UserProfile {
   isActive: boolean;
 }
 
+/**
+ * A checkpoint as every signed-in role may read it. The printed QR token and the enrolled NFC
+ * serial are secrets: the database does not let guards, supervisors or viewers read them
+ * (column privileges). Scans are matched against their SHA-256 fingerprints instead; org admins
+ * read the raw values through fetchCheckpointSecrets() (src/lib/data/checkpoints.ts).
+ */
 export interface Checkpoint {
   id: string;
   siteId: string;
   name: string;
   description?: string;
-  qrCodeHash: string;
-  nfcUid?: string;
+  /** Lower-case hex SHA-256 of the printed QR token (checkpoints.qr_token_sha256). */
+  qrTokenSha256?: string;
+  /** false: old/weak token format; the card must be rotated and reprinted. */
+  qrTokenStrong?: boolean;
+  /** Lower-case hex SHA-256 of the normalised NFC serial; absent when no tag is enrolled. */
+  nfcUidSha256?: string;
   latitude?: number;
   longitude?: number;
   permittedRadiusMeters: number;
   orderIndex: number;
   isActive: boolean;
+  /** Set by the server when the checkpoint was deactivated (scans captured before it still count). */
+  deactivatedAt?: string;
+  organisationId?: string;
+  /** Dawie legacy card code: QR payload PLAAS-CP:<legacyCode> */
+  legacyCode?: string;
+  /** Stamped by the server when a tag was enrolled (client values are ignored). */
+  nfcEnrolledAt?: string;
+  nfcEnrolledBy?: string;
 }
 
 export interface Shift {
@@ -84,6 +112,8 @@ export interface Shift {
   startLongitude?: number;
   endLatitude?: number;
   endLongitude?: number;
+  startAccuracyMeters?: number;
+  endAccuracyMeters?: number;
   status: ShiftStatus;
   notes?: string;
 }
@@ -119,6 +149,18 @@ export interface PatrolScan {
   hashChain?: string;
   prevHashChain?: string;
   photoUrl?: string;
+  siteId?: string;
+  gpsConfidence?: GpsConfidence;
+  gpsError?: GpsErrorKind;
+  locationTimestamp?: string;
+  checkpointRadiusMeters?: number;
+  payloadType?: CheckpointPayloadType;
+  /**
+   * Server verdict (patrol_scans.payload_verified): the phone submitted this checkpoint's strong
+   * QR token or enrolled NFC serial. Legacy PLAAS-CP cards and manual entries are never verified.
+   * Like the GPS verdict it reflects what the phone reported; it is not proof of presence.
+   */
+  payloadVerified?: boolean;
   createdAt?: string;
 }
 
@@ -134,6 +176,7 @@ export interface Incident {
   description: string;
   latitude?: number;
   longitude?: number;
+  accuracyMeters?: number;
   status: IncidentStatus;
   reportedAt: string;
   acknowledgedBy?: string;
@@ -162,6 +205,8 @@ export interface PanicAlert {
 export interface LicenseDiscData {
   plate: string;
   regNumber?: string;
+  /** Vehicle description as encoded on the disc, e.g. "Sedan (closed top)" */
+  description?: string;
   make?: string;
   model?: string;
   colour?: string;
@@ -193,5 +238,13 @@ export interface GateEntry {
   entryTime: string;
   exitTime?: string;
   dwellDurationSeconds?: number;
+  /** Storage PATH in the private evidence-media bucket (not a URL). */
   vehiclePhotoUrl?: string;
+  latitude?: number;
+  longitude?: number;
+  accuracyMeters?: number;
+  registerNumber?: string;
+  vehicleDescription?: string;
+  /** For an OUT row: id of the matching IN row. */
+  linkedEntryId?: string;
 }

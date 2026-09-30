@@ -1,153 +1,208 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useId, useState } from 'react';
 import Image from 'next/image';
-import { LogOut, Globe, Check, X } from 'lucide-react';
+import { liveQuery } from 'dexie';
+import { Check, ChevronDown, MapPin } from 'lucide-react';
+import { useAuth } from '@/lib/auth/AuthProvider';
 import { useTranslation } from '@/lib/i18n/context';
-import { useAuth } from '@/context/AuthContext';
-import { SupportedLanguage } from '@/types/models';
+import { sastTimeHM } from '@/lib/config/siteTime';
+import type { Site } from '@/types/models';
+import { offlineDB, type ActiveShiftRecord } from '@/lib/offline/db';
+import { getActiveShift } from '@/lib/data/shiftStore';
+import { ModalDialog, SyncStatusButton } from '@/components/shared/HeaderNav';
 
-export function HeaderBar({ guardName }: { guardName?: string }) {
-  const router = useRouter();
-  const { signOut } = useAuth();
-  const { t, language, setLanguage } = useTranslation();
-  const [timeStr, setTimeStr] = useState<string>('');
-  const [showLangPicker, setShowLangPicker] = useState(false);
-
+/** SAST wall-clock time, refreshed every 15 s. Empty until mounted (server HTML has no time). */
+function useSastClock(): string {
+  const [time, setTime] = useState('');
   useEffect(() => {
-    const updateClock = () => {
-      const d = new Date();
-      setTimeStr(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+    const tick = () => setTime(sastTimeHM(Date.now()));
+    const first = window.setTimeout(tick, 0);
+    const interval = window.setInterval(tick, 15_000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(interval);
     };
-    updateClock();
-    const interval = setInterval(updateClock, 10000);
-    return () => clearInterval(interval);
   }, []);
+  return time;
+}
 
-  const handleLogout = async () => {
-    try {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('eagle_eye_selected_guard');
-      }
-      await signOut();
-    } finally {
-      router.push('/login');
-    }
-  };
+/** The guard's open shift on this phone (live), or null. `undefined` while loading. */
+export function useActiveShiftRecord(userId: string | null): ActiveShiftRecord | null | undefined {
+  const [state, setState] = useState<{ userId: string | null; record: ActiveShiftRecord | null | undefined }>({
+    userId: null,
+    record: undefined
+  });
+  useEffect(() => {
+    if (!userId || !offlineDB) return;
+    const subscription = liveQuery(() => getActiveShift(userId)).subscribe({
+      next: (record) => setState({ userId, record }),
+      error: () => setState({ userId, record: null })
+    });
+    return () => subscription.unsubscribe();
+  }, [userId]);
+  if (!userId || !offlineDB) return null;
+  return state.userId === userId ? state.record : undefined;
+}
 
-  const handleSelectLanguage = (lang: SupportedLanguage) => {
-    setLanguage(lang);
-    setShowLangPicker(false);
-  };
+/** Active sites first (by name); inactive ones last. */
+export function orderSites(sites: readonly Site[]): Site[] {
+  return [...sites].sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name));
+}
+
+export interface SiteChoiceListProps {
+  /** A shift is open on this phone: the site cannot change until the guard clocks out. */
+  locked?: boolean;
+  onChosen?: (site: Site) => void;
+}
+
+/** The guard's assigned sites as large buttons; choosing one makes it the active site (stored per user). */
+export function SiteChoiceList({ locked = false, onChosen }: SiteChoiceListProps) {
+  const { t } = useTranslation();
+  const auth = useAuth();
+  const sites = orderSites(auth.sites);
+
+  return (
+    <div className="space-y-3">
+      {locked && (
+        <p className="rounded-xl border border-ee-warning/60 bg-ee-warning/10 p-3 text-sm text-ee-warning" data-testid="chrome-site-locked">
+          {t('authSiteLocked')}
+        </p>
+      )}
+      <ul className="divide-y divide-ee-border border-y border-ee-border" data-testid="chrome-site-list">
+        {sites.map((site) => {
+          const current = auth.activeSite?.id === site.id;
+          const disabled = locked || !site.isActive;
+          return (
+            <li key={site.id}>
+              <button
+                type="button"
+                disabled={disabled && !current}
+                aria-pressed={current}
+                onClick={() => {
+                  if (disabled && !current) return;
+                  // Also for the current site: stores the choice so the guard is not asked again.
+                  auth.setActiveSiteId(site.id);
+                  onChosen?.(site);
+                }}
+                className="flex min-h-14 w-full items-center justify-between gap-3 px-2 py-2 text-left hover:bg-ee-surface-raised disabled:opacity-50"
+                data-testid={`chrome-site-option-${site.code || site.id}`}
+              >
+                <span className="min-w-0">
+                  <span className={`block truncate text-base font-semibold ${current ? 'text-ee-primary' : 'text-ee-text'}`}>
+                    {site.name}
+                  </span>
+                  <span className="block truncate text-sm text-ee-muted">
+                    {site.isActive ? site.code : t('authSiteInactive', site.code)}
+                  </span>
+                </span>
+                {current && <Check className="h-6 w-6 flex-none text-ee-primary" aria-hidden="true" />}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+export interface HeaderBarProps {
+  /** A shift is open on this phone (the site switch is then locked). */
+  siteLocked?: boolean;
+}
+
+export function HeaderBar({ siteLocked = false }: HeaderBarProps) {
+  const { t } = useTranslation();
+  const auth = useAuth();
+  const clock = useSastClock();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerTitleId = useId();
+
+  const guardName = auth.profile ? `${auth.profile.firstName} ${auth.profile.lastName}`.trim() : '';
+  const site = auth.activeSite;
+  const canSwitch = auth.sites.length > 1;
+
+  const identity = (
+    <>
+      <span className="block truncate text-sm font-semibold text-ee-text" data-testid="chrome-guard-name">
+        {guardName}
+      </span>
+      <span className="flex min-w-0 items-center gap-1 text-sm text-ee-muted">
+        <MapPin className="h-4 w-4 flex-none" aria-hidden="true" />
+        <span className="truncate" data-testid="chrome-site-name">
+          {site?.name ?? t('authNoSiteShort')}
+        </span>
+        {canSwitch && <ChevronDown className="h-4 w-4 flex-none text-ee-primary" aria-hidden="true" />}
+      </span>
+    </>
+  );
 
   return (
     <>
-      <header className="sticky top-0 z-30 bg-[#18212B]/95 backdrop-blur-md border-b border-[#324050] px-4 py-2.5">
-        <div className="max-w-md mx-auto flex items-center justify-between">
-          {/* Guard & Time with Official Eagle Eye Logo */}
-          <div className="flex items-center gap-2.5">
-            <div className="relative w-9 h-9 rounded-xl overflow-hidden border border-[#F0A53A]/70 flex-none bg-[#18212B] shadow-md shadow-[#F0A53A]/15">
-              <Image
-                src="/Eagle_Eye_Logo.jpg"
-                alt="Eagle Eye"
-                fill
-                className="object-cover"
-                priority
-              />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-xs font-semibold text-[#9AA5B1] truncate max-w-[150px]">
-                {guardName || t('guardOnDuty') || 'Guard'}
-              </span>
-              <span className="text-base font-bold text-[#E9E4D8] font-mono tracking-tight leading-none mt-0.5">
-                {timeStr || '--:--'}
-              </span>
-            </div>
-          </div>
-
-          {/* Action Buttons: Language Selector & Log Out */}
-          <div className="flex items-center gap-2">
+      <header className="sticky top-0 z-30 border-b border-ee-border bg-ee-bg pt-[env(safe-area-inset-top)]">
+        <div className="mx-auto flex max-w-md items-center gap-2 px-4 py-2">
+          <Image
+            src="/Eagle_Eye_Logo.jpg"
+            alt=""
+            width={36}
+            height={36}
+            className="h-9 w-9 flex-none rounded-lg border border-ee-primary/60 object-cover max-[359px]:hidden"
+            loading="eager"
+          />
+          {canSwitch ? (
             <button
               type="button"
-              onClick={() => setShowLangPicker(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#212C38] border border-[#324050] text-xs font-bold text-[#F0A53A] hover:border-[#F0A53A]/70 active:scale-95 transition-all shadow-sm"
-              title="Change Language / Kies Taal / Khetha Ulimi"
+              onClick={() => setPickerOpen(true)}
+              aria-haspopup="dialog"
+              aria-label={t('authSiteChangeLabel', guardName, site?.name ?? '')}
+              className="min-h-12 min-w-0 flex-1 rounded-lg px-1 text-left hover:bg-ee-surface-raised"
+              data-testid="chrome-site-switch"
             >
-              <Globe className="w-3.5 h-3.5 text-[#F0A53A]" />
-              <span className="uppercase font-mono tracking-wider">{language}</span>
+              {identity}
             </button>
-
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#212C38] border border-[#324050] text-xs font-bold text-[#E0685C] hover:bg-[#B3261E] hover:text-white hover:border-[#B3261E] transition-all active:scale-95 shadow-sm"
-              title="Log Out / Teken Uit / Phuma"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>{t('logOut') || 'Log Out'}</span>
-            </button>
-          </div>
+          ) : (
+            <div className="min-w-0 flex-1 px-1">{identity}</div>
+          )}
+          <span
+            className="flex-none font-display text-2xl font-bold tabular-nums leading-none max-[359px]:hidden"
+            aria-hidden="true"
+            data-testid="chrome-clock"
+          >
+            {clock || '--:--'}
+          </span>
+          <SyncStatusButton className="flex-none" />
         </div>
+        {auth.isOfflineSession && (
+          <p
+            className="border-t border-ee-border px-4 py-1.5 text-center text-xs font-semibold text-ee-warning"
+            data-testid="chrome-offline-session"
+          >
+            {t('authOfflineSessionBanner')}
+          </p>
+        )}
       </header>
 
-      {/* Language Picker Dialog */}
-      {showLangPicker && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-sm bg-[#212C38] border-2 border-[#F0A53A] rounded-3xl p-5 shadow-2xl text-[#E9E4D8] space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Globe className="w-5 h-5 text-[#F0A53A]" />
-                <h4 className="text-base font-bold text-[#E9E4D8]">
-                  {t('selectLanguage') || 'Select Language'}
-                </h4>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowLangPicker(false)}
-                className="p-1.5 rounded-xl bg-[#18212B] border border-[#324050] text-[#9AA5B1] hover:text-[#E9E4D8]"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {[
-                { code: 'en' as const, name: 'English (Default)', native: 'English', flag: '🇬🇧' },
-                { code: 'af' as const, name: 'Afrikaans', native: 'Afrikaans', flag: '🇿🇦' },
-                { code: 'zu' as const, name: 'isiZulu', native: 'isiZulu', flag: '🇿🇦' }
-              ].map((item) => {
-                const isSelected = language === item.code;
-                return (
-                  <button
-                    key={item.code}
-                    type="button"
-                    onClick={() => handleSelectLanguage(item.code)}
-                    className={`w-full p-3 rounded-2xl border text-left flex items-center justify-between transition-all ${
-                      isSelected
-                        ? 'bg-[#18212B] border-[#F0A53A] ring-1 ring-[#F0A53A] text-[#F0A53A] font-bold shadow-md'
-                        : 'bg-[#18212B]/70 border-[#324050] text-[#9AA5B1] hover:border-[#F0A53A]/50 hover:text-[#E9E4D8]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{item.flag}</span>
-                      <div>
-                        <div className={`text-sm ${isSelected ? 'font-bold text-[#F0A53A]' : 'text-[#E9E4D8]'}`}>
-                          {item.name}
-                        </div>
-                        <div className="text-[11px] text-[#9AA5B1]">{item.native}</div>
-                      </div>
-                    </div>
-                    {isSelected && (
-                      <div className="w-5 h-5 rounded-full bg-[#F0A53A] flex items-center justify-center text-[#2A1A04]">
-                        <Check className="w-3.5 h-3.5 stroke-[3]" />
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+      {canSwitch && (
+        <ModalDialog
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          labelledBy={pickerTitleId}
+          testId="chrome-site-dialog"
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 id={pickerTitleId} className="font-display text-2xl font-semibold">
+              {t('authSitePickTitle')}
+            </h2>
+            <button
+              type="button"
+              onClick={() => setPickerOpen(false)}
+              className="min-h-11 rounded-xl border border-ee-border px-4 text-sm font-semibold hover:bg-ee-surface-raised"
+            >
+              {t('authClose')}
+            </button>
           </div>
-        </div>
+          <SiteChoiceList locked={siteLocked} onChosen={() => setPickerOpen(false)} />
+        </ModalDialog>
       )}
     </>
   );

@@ -1,168 +1,235 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { 
-  RefreshCw, 
-  Globe, 
-  FileSpreadsheet, 
-  Download 
-} from 'lucide-react';
+import React, { useId, useState } from 'react';
+import Link from 'next/link';
+import { ChevronRight, Download, History, Loader2, MapPin } from 'lucide-react';
+import { useAuth } from '@/lib/auth/AuthProvider';
+import { guardLoginDomain } from '@/lib/auth/signIn';
+import { AREA_ROLES, hasAnyRole } from '@/lib/auth/routeAccess';
 import { useTranslation } from '@/lib/i18n/context';
-import { Card, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { syncEngine } from '@/lib/offline/sync';
 import { offlineDB } from '@/lib/offline/db';
-import { OfflineSyncSummary } from '@/types/offline';
-import { SupportedLanguage } from '@/types/models';
+import { sastDateString } from '@/lib/config/siteTime';
+import {
+  LanguageSwitch,
+  ModalDialog,
+  SignOutControl,
+  SyncDetails,
+  toneForeground,
+  useSyncSummary,
+  type Tone
+} from '@/components/shared/HeaderNav';
+import { SiteChoiceList, useActiveShiftRecord } from '@/components/guard/HeaderBar';
+import { buildGuardEventsCsv, loadGuardEvents } from '../history/guardEvents';
+
+function SectionTitle({ children, id }: { children: React.ReactNode; id?: string }) {
+  return (
+    <h2 id={id} className="mb-2 mt-6 font-display text-2xl font-semibold">
+      {children}
+    </h2>
+  );
+}
+
+const listLinkClass =
+  'flex min-h-14 items-center justify-between gap-3 px-1 py-2 text-base font-semibold text-ee-text no-underline hover:bg-ee-surface-raised';
 
 export default function GuardMorePage() {
-  const { language, setLanguage, t } = useTranslation();
-  const [syncSummary, setSyncSummary] = useState<OfflineSyncSummary>({
-    isOnline: true,
-    pendingCount: 0,
-    syncingCount: 0,
-    failedCount: 0
-  });
+  const { t } = useTranslation();
+  const auth = useAuth();
+  const { summary, ready } = useSyncSummary();
+  const userId = auth.user?.id ?? null;
+  const activeShift = useActiveShiftRecord(userId);
+  const [siteDialogOpen, setSiteDialogOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState<{ tone: Tone; text: string } | null>(null);
+  const siteTitleId = useId();
 
-  useEffect(() => {
-    if (syncEngine) {
-      const unsub = syncEngine.subscribe(setSyncSummary);
-      return unsub;
-    }
-  }, []);
+  const email = auth.user?.email ?? '';
+  const guardSuffix = `@${guardLoginDomain().toLowerCase()}`;
+  const isGuardLogin = email.toLowerCase().endsWith(guardSuffix);
+  const loginName = isGuardLogin ? email.slice(0, -guardSuffix.length) : email;
+  const fullName = auth.profile ? `${auth.profile.firstName} ${auth.profile.lastName}`.trim() : '';
 
-  const handleManualSync = () => {
-    if (syncEngine) {
-      void syncEngine.triggerSync();
-    }
-  };
+  const otherPortals = [
+    hasAnyRole(auth.roles, AREA_ROLES.supervisor) && { href: '/supervisor', key: 'authPortalSupervisor' as const },
+    hasAnyRole(auth.roles, AREA_ROLES.admin) && { href: '/admin', key: 'authPortalAdmin' as const }
+  ].filter((entry): entry is { href: string; key: 'authPortalSupervisor' | 'authPortalAdmin' } => Boolean(entry));
 
-  const handleExportLocalCSV = async () => {
-    if (!offlineDB) return;
-
-    const scans = await offlineDB.scans.toArray();
-    if (scans.length === 0) {
-      alert('No scan records found in local database');
+  const exportCsv = async () => {
+    if (exporting) return;
+    const db = offlineDB;
+    if (!db || !userId) {
+      setExportStatus({ tone: 'danger', text: t('authHistNoStorage') });
       return;
     }
-
-    const headers = ['ID', 'Checkpoint', 'Timestamp', 'Accuracy (m)', 'Distance (m)', 'Valid', 'Method'];
-    const rows = scans.map((s) => [
-      s.id,
-      `"${s.checkpointName}"`,
-      s.scanTimestampDevice,
-      s.accuracyMeters || '',
-      s.distanceToCheckpointMeters || '',
-      s.isValidProximity ? 'YES' : 'NO',
-      s.method
-    ]);
-
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `eagle_eye_scans_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    setExporting(true);
+    setExportStatus(null);
+    try {
+      // Every record of this guard on this phone (unbounded: read without an IndexedDB count).
+      const rows = await loadGuardEvents(db, userId, { kind: 'all' }, Number.POSITIVE_INFINITY);
+      if (rows.length === 0) {
+        setExportStatus({ tone: 'muted', text: t('authExportEmpty') });
+        return;
+      }
+      const siteNames = Object.fromEntries(auth.sites.map((site) => [site.id, site.name]));
+      const csv = buildGuardEventsCsv(rows, t, siteNames);
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `eagle-eye-records-${sastDateString(Date.now())}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      setExportStatus({ tone: 'success', text: t('authExportPrepared', rows.length) });
+    } catch (error) {
+      setExportStatus({ tone: 'danger', text: t('authExportFailed', error instanceof Error ? error.message : String(error)) });
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
-    <div className="space-y-4 max-w-lg mx-auto pb-6">
-      <div className="px-1">
-        <h2 className="text-xl font-black text-white tracking-tight">{t('more')} & Operational Settings</h2>
-        <p className="text-xs text-slate-400">Device synchronisation, offline cache, and language</p>
-      </div>
+    <div className="pb-6">
+      <h1 className="mb-4 font-display text-3xl font-semibold">{t('more')}</h1>
 
-      {/* Language Selector */}
-      <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
-        <CardHeader className="mb-2">
-          <div className="flex items-center gap-2">
-            <Globe className="w-5 h-5 text-[#F0A53A]" />
-            <CardTitle className="text-sm">Language / Taal / Ulimi</CardTitle>
+      <section aria-labelledby="more-account">
+        <SectionTitle id="more-account">{t('authMoreAccount')}</SectionTitle>
+        <dl className="divide-y divide-ee-border border-y border-ee-border">
+          <div className="flex items-baseline justify-between gap-3 py-3">
+            <dt className="text-sm text-ee-muted">{t('authMoreName')}</dt>
+            <dd className="min-w-0 truncate text-right text-base font-semibold" data-testid="more-account-name">
+              {fullName}
+            </dd>
           </div>
-          <Badge variant="info">{language.toUpperCase()}</Badge>
-        </CardHeader>
+          <div className="flex items-baseline justify-between gap-3 py-3">
+            <dt className="text-sm text-ee-muted">{isGuardLogin ? t('authMoreUsername') : t('authEmailLabel')}</dt>
+            <dd className="min-w-0 truncate text-right text-base" data-testid="more-account-login">
+              {loginName}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-3 py-2">
+            <dt className="text-sm text-ee-muted">{t('authMoreSite')}</dt>
+            <dd className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-right text-base font-semibold" data-testid="more-account-site">
+                {auth.activeSite?.name ?? t('authNoSiteShort')}
+              </span>
+              {auth.sites.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setSiteDialogOpen(true)}
+                  aria-haspopup="dialog"
+                  className="inline-flex min-h-11 flex-none items-center gap-1 rounded-xl border border-ee-border px-3 text-sm font-semibold text-ee-primary hover:bg-ee-surface-raised"
+                  data-testid="more-change-site"
+                >
+                  <MapPin className="h-4 w-4" aria-hidden="true" />
+                  {t('authMoreChangeSite')}
+                </button>
+              )}
+            </dd>
+          </div>
+        </dl>
+      </section>
 
-        <div className="grid grid-cols-3 gap-2 mt-2">
-          {[
-            { code: 'af', label: 'Afrikaans', flag: '🇿🇦' },
-            { code: 'en', label: 'English', flag: '🇬🇧' },
-            { code: 'zu', label: 'isiZulu', flag: '🇿🇦' }
-          ].map((lang) => (
+      <section aria-labelledby="more-language">
+        <SectionTitle id="more-language">{t('authLanguageGroup')}</SectionTitle>
+        <LanguageSwitch testIdPrefix="more-lang" />
+      </section>
+
+      <section aria-labelledby="more-uploads">
+        <SectionTitle id="more-uploads">{t('authSyncTitle')}</SectionTitle>
+        <SyncDetails summary={summary} ready={ready} />
+      </section>
+
+      <section aria-labelledby="more-records">
+        <SectionTitle id="more-records">{t('authMoreRecords')}</SectionTitle>
+        <ul className="divide-y divide-ee-border border-y border-ee-border">
+          <li>
+            <Link href="/guard/history" className={listLinkClass} data-testid="more-history-link">
+              <span className="flex items-center gap-3">
+                <History className="h-5 w-5 text-ee-muted" aria-hidden="true" />
+                {t('history')}
+              </span>
+              <ChevronRight className="h-5 w-5 text-ee-muted" aria-hidden="true" />
+            </Link>
+          </li>
+          <li>
             <button
-              key={lang.code}
-              onClick={() => setLanguage(lang.code as SupportedLanguage)}
-              className={`p-3 rounded-2xl border text-center transition-all ${
-                language === lang.code
-                  ? 'bg-[#F0A53A] border-[#F0A53A] text-[#2A1A04] font-bold shadow-lg'
-                  : 'bg-[#18212B] border-[#324050] text-[#9AA5B1] hover:border-[#F0A53A]/50 hover:text-[#E9E4D8]'
-              }`}
+              type="button"
+              onClick={() => void exportCsv()}
+              disabled={exporting}
+              className={`${listLinkClass} w-full text-left disabled:opacity-60`}
+              data-testid="more-export-csv"
             >
-              <span className="text-lg block mb-0.5">{lang.flag}</span>
-              <span className="text-xs font-semibold block">{lang.label}</span>
+              <span className="flex items-center gap-3">
+                {exporting ? (
+                  <Loader2 className="h-5 w-5 animate-spin text-ee-muted motion-reduce:animate-none" aria-hidden="true" />
+                ) : (
+                  <Download className="h-5 w-5 text-ee-muted" aria-hidden="true" />
+                )}
+                <span>
+                  {t('authExportCsv')}
+                  <span className="block text-sm font-normal text-ee-muted">{t('authExportHint')}</span>
+                </span>
+              </span>
             </button>
-          ))}
-        </div>
-      </Card>
-
-      {/* Offline Sync Status */}
-      <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
-        <CardHeader className="mb-2">
-          <div className="flex items-center gap-2">
-            <RefreshCw className="w-5 h-5 text-emerald-400" />
-            <CardTitle className="text-sm">Offline Cache & Sync Queue</CardTitle>
-          </div>
-          <Badge variant={syncSummary.isOnline ? 'success' : 'warning'}>
-            {syncSummary.isOnline ? 'Connected' : 'Offline'}
-          </Badge>
-        </CardHeader>
-
-        <div className="space-y-2 text-xs py-2">
-          <div className="flex justify-between p-2 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-400">Records Pending Sync:</span>
-            <span className="font-mono font-bold text-white">{syncSummary.pendingCount}</span>
-          </div>
-          <div className="flex justify-between p-2 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-400">Failed / Retry Queue:</span>
-            <span className="font-mono font-bold text-rose-400">{syncSummary.failedCount}</span>
-          </div>
-        </div>
-
-        <Button
-          onClick={handleManualSync}
-          variant="secondary"
-          size="touch"
-          className="w-full mt-2 gap-2 font-bold"
+          </li>
+        </ul>
+        <p
+          role="status"
+          aria-live="polite"
+          className={`mt-2 min-h-5 text-sm ${exportStatus ? toneForeground[exportStatus.tone] : ''}`}
+          data-testid="more-export-status"
         >
-          <RefreshCw className="w-4 h-4" />
-          <span>{t('syncNow')}</span>
-        </Button>
-      </Card>
-
-      {/* Backup CSV Export */}
-      <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
-        <CardHeader className="mb-2">
-          <div className="flex items-center gap-2">
-            <FileSpreadsheet className="w-5 h-5 text-amber-400" />
-            <CardTitle className="text-sm">Offline Evidence Export</CardTitle>
-          </div>
-        </CardHeader>
-        <p className="text-xs text-slate-400 mb-3">
-          Download patrol scans stored in your phone&apos;s IndexedDB cache as a CSV spreadsheet.
+          {exportStatus?.text ?? ''}
         </p>
-        <Button
-          onClick={() => void handleExportLocalCSV()}
-          variant="outline"
-          size="touch"
-          className="w-full gap-2 font-bold text-slate-200 border-slate-700"
-        >
-          <Download className="w-4 h-4 text-amber-400" />
-          <span>Export Local Scans (CSV)</span>
-        </Button>
-      </Card>
+      </section>
 
+      {otherPortals.length > 0 && (
+        <section aria-labelledby="more-portals">
+          <SectionTitle id="more-portals">{t('authMoreOtherPortals')}</SectionTitle>
+          <ul className="divide-y divide-ee-border border-y border-ee-border">
+            {otherPortals.map((portal) => (
+              <li key={portal.href}>
+                <Link href={portal.href} className={listLinkClass} data-testid={`more-portal-${portal.href.slice(1)}`}>
+                  {t(portal.key)}
+                  <ChevronRight className="h-5 w-5 text-ee-muted" aria-hidden="true" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section aria-labelledby="more-signout" className="mt-8">
+        <h2 id="more-signout" className="sr-only">
+          {t('authSignOut')}
+        </h2>
+        <SignOutControl variant="full" testId="more-signout" />
+        <p className="mt-2 text-sm text-ee-muted">{t('authSignOutHint')}</p>
+      </section>
+
+      {auth.sites.length > 1 && (
+        <ModalDialog
+          open={siteDialogOpen}
+          onClose={() => setSiteDialogOpen(false)}
+          labelledBy={siteTitleId}
+          testId="more-site-dialog"
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 id={siteTitleId} className="font-display text-2xl font-semibold">
+              {t('authSitePickTitle')}
+            </h2>
+            <button
+              type="button"
+              onClick={() => setSiteDialogOpen(false)}
+              className="min-h-11 rounded-xl border border-ee-border px-4 text-sm font-semibold hover:bg-ee-surface-raised"
+            >
+              {t('authClose')}
+            </button>
+          </div>
+          <SiteChoiceList locked={!!activeShift} onChosen={() => setSiteDialogOpen(false)} />
+        </ModalDialog>
+      )}
     </div>
   );
 }

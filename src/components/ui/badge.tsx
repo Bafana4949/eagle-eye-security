@@ -1,29 +1,30 @@
 import React from 'react';
 import { twMerge } from 'tailwind-merge';
 
-export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
-  variant?: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+export type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+
+export interface BadgeProps extends React.ComponentPropsWithRef<'span'> {
+  variant?: BadgeVariant;
 }
 
-export function Badge({
-  className,
-  variant = 'neutral',
-  children,
-  ...props
-}: BadgeProps) {
-  const variants = {
-    success: 'bg-[#76C08F]/15 text-[#76C08F] border-[#76C08F]/40',
-    warning: 'bg-[#F0A53A]/15 text-[#F0A53A] border-[#F0A53A]/40',
-    danger: 'bg-[#E0685C]/15 text-[#E0685C] border-[#E0685C]/40',
-    info: 'bg-[#F0A53A]/20 text-[#FFC76A] border-[#F0A53A]/50',
-    neutral: 'bg-[#212C38] text-[#9AA5B1] border-[#324050]'
-  };
+/**
+ * Small label. Colour is never the only signal: always put the state in words inside the badge.
+ * Small danger text uses text-ee-danger-text (ee-danger alone is below 4.5:1 on tinted panels).
+ */
+const VARIANTS: Record<BadgeVariant, string> = {
+  success: 'border-ee-success/50 bg-ee-success/15 text-ee-success',
+  warning: 'border-ee-warning/50 bg-ee-warning/15 text-ee-warning',
+  danger: 'border-ee-danger/60 bg-ee-danger/15 text-ee-danger-text',
+  info: 'border-ee-primary/50 bg-ee-primary/10 text-ee-primary',
+  neutral: 'border-ee-border bg-ee-surface text-ee-muted',
+};
 
+export function Badge({ className, variant = 'neutral', children, ...props }: BadgeProps) {
   return (
     <span
       className={twMerge(
-        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border',
-        variants[variant],
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold leading-5',
+        VARIANTS[variant],
         className
       )}
       {...props}

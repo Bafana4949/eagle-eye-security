@@ -1,127 +1,216 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Clock, MapPin } from 'lucide-react';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { liveQuery } from 'dexie';
+import { ArrowLeft, Camera } from 'lucide-react';
+import { useAuth } from '@/lib/auth/AuthProvider';
 import { useTranslation } from '@/lib/i18n/context';
 import { offlineDB } from '@/lib/offline/db';
-import { PatrolScan, Shift } from '@/types/models';
-import { formatTimeHM } from '@/features/shifts/shiftCalculator';
-import { formatDistance } from '@/lib/gps/haversine';
+import { sastDateString, sastTimeHM } from '@/lib/config/siteTime';
+import {
+  HISTORY_LIMIT,
+  describeGuardEvent,
+  gpsSummary,
+  loadGuardEvents,
+  loadGuardShifts,
+  readableSyncError,
+  shiftOptionLabel,
+  syncStateView,
+  type GuardEventRow,
+  type HistoryFilter,
+  type ShiftOption,
+  type Tone
+} from './guardEvents';
+
+const toneText: Record<Tone, string> = {
+  success: 'text-ee-success',
+  warning: 'text-ee-warning',
+  danger: 'text-ee-danger-text',
+  muted: 'text-ee-muted'
+};
+
+const toneBadge: Record<Tone, string> = {
+  success: 'border-ee-success/60 bg-ee-success/10 text-ee-success',
+  warning: 'border-ee-warning/60 bg-ee-warning/10 text-ee-warning',
+  danger: 'border-ee-danger/70 bg-ee-danger/15 text-ee-danger-text',
+  muted: 'border-ee-border bg-ee-surface text-ee-muted'
+};
+
+type LoadState<T> = { key: string; status: 'loading' } | { key: string; status: 'ready'; data: T } | { key: string; status: 'error'; message: string };
+
+/**
+ * Subscribes to a Dexie live query (re-runs when the tables it read change). `key` identifies
+ * the query: a new key starts a new subscription.
+ */
+function useLiveData<T>(key: string | null, query: (() => Promise<T>) | null): LoadState<T> | null {
+  const queryRef = useRef(query);
+  const [state, setState] = useState<LoadState<T> | null>(null);
+  useEffect(() => {
+    queryRef.current = query;
+  });
+  useEffect(() => {
+    if (!key) return;
+    const subscription = liveQuery(() => {
+      const run = queryRef.current;
+      return run ? run() : Promise.reject(new Error('No query'));
+    }).subscribe({
+      next: (data) => setState({ key, status: 'ready', data }),
+      error: (error: unknown) =>
+        setState({ key, status: 'error', message: error instanceof Error ? error.message : String(error) })
+    });
+    return () => subscription.unsubscribe();
+  }, [key]);
+  if (!key || !query) return null;
+  return state && state.key === key ? state : { key, status: 'loading' };
+}
+
+function HistoryRow({ row }: { row: GuardEventRow }) {
+  const { t } = useTranslation();
+  const { event } = row;
+  const description = describeGuardEvent(event, t);
+  const gps = gpsSummary(event, t);
+  const upload = syncStateView(row.syncState, t);
+  const isAlert = event.type === 'panic' || event.type === 'incident';
+
+  return (
+    <li className="flex gap-3 py-3" data-testid="history-row" data-event-type={event.type} data-sync-state={row.syncState}>
+      <div className="w-14 flex-none">
+        <span className="block font-display text-xl font-semibold leading-tight tabular-nums">{sastTimeHM(event.createdAt)}</span>
+        <span className="block text-xs text-ee-muted">{sastDateString(event.createdAt).slice(5)}</span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className={`break-words text-base font-semibold ${isAlert ? 'text-ee-danger-text' : 'text-ee-text'}`}>{description.title}</p>
+        {description.details.map((detail, index) => (
+          <p key={index} className="break-words text-sm text-ee-muted">
+            {index === description.details.length - 1 && event.mediaFields.length > 0 ? (
+              <span className="inline-flex items-center gap-1">
+                <Camera className="h-4 w-4" aria-hidden="true" />
+                {detail}
+              </span>
+            ) : (
+              detail
+            )}
+          </p>
+        ))}
+        {gps && <p className={`text-sm ${toneText[gps.tone]}`}>{gps.text}</p>}
+        {row.syncState === 'failed' && row.lastError && (
+          <p className="break-words text-sm text-ee-danger-text" data-testid="history-row-error">
+            {readableSyncError(row.lastError)}
+          </p>
+        )}
+      </div>
+      <div className="flex-none">
+        <span
+          className={`inline-block rounded-full border px-2.5 py-1 text-xs font-semibold ${toneBadge[upload.tone]}`}
+          data-testid="history-row-sync"
+        >
+          {upload.text}
+        </span>
+      </div>
+    </li>
+  );
+}
 
 export default function GuardHistoryPage() {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<'scans' | 'shifts'>('scans');
-  const [scans, setScans] = useState<PatrolScan[]>([]);
-  const [shifts, setShifts] = useState<Shift[]>([]);
+  const auth = useAuth();
+  const userId = auth.user?.id ?? null;
+  const db = offlineDB;
+  const selectId = useId();
+  // null = not chosen yet: show the newest shift (or everything when there is none).
+  const [choice, setChoice] = useState<string | null>(null);
 
-  useEffect(() => {
-    const loadLogs = async () => {
-      if (offlineDB) {
-        const scanRecords = await offlineDB.scans.reverse().limit(50).toArray();
-        setScans(scanRecords);
+  const shifts = useLiveData<ShiftOption[]>(
+    db && userId ? `shifts:${userId}` : null,
+    db && userId ? () => loadGuardShifts(db, userId) : null
+  );
+  const shiftOptions = shifts?.status === 'ready' ? shifts.data : [];
+  const shiftsLoaded = shifts?.status === 'ready' || shifts?.status === 'error';
+  const selected = choice ?? (shiftsLoaded ? shiftOptions[0]?.shiftId ?? 'all' : null);
+  const filter: HistoryFilter | null = selected === null ? null : selected === 'all' ? { kind: 'all' } : { kind: 'shift', shiftId: selected };
 
-        const shiftRecords = await offlineDB.shifts.reverse().limit(20).toArray();
-        setShifts(shiftRecords);
-      }
-    };
+  const events = useLiveData<GuardEventRow[]>(
+    db && userId && filter ? `events:${userId}:${selected}` : null,
+    db && userId && filter ? () => loadGuardEvents(db, userId, filter) : null
+  );
 
-    void loadLogs();
-  }, []);
+  const rows = events?.status === 'ready' ? events.data : [];
 
   return (
-    <div className="space-y-4 max-w-lg mx-auto pb-6">
-      {/* Header */}
+    <div className="space-y-4 pb-6">
       <div className="flex items-center gap-3">
-        <Link href="/guard" className="p-2.5 rounded-2xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white">
-          <ArrowLeft className="w-5 h-5" />
+        <Link
+          href="/guard/more"
+          aria-label={t('authBackToMore')}
+          className="inline-flex min-h-12 min-w-12 items-center justify-center rounded-xl border border-ee-border bg-ee-surface text-ee-text hover:bg-ee-surface-raised"
+          data-testid="history-back"
+        >
+          <ArrowLeft className="h-5 w-5" aria-hidden="true" />
         </Link>
-        <div>
-          <h2 className="text-xl font-black text-white tracking-tight">{t('history')}</h2>
-          <p className="text-xs text-slate-400">Local audit log of scans and duty shifts</p>
+        <div className="min-w-0">
+          <h1 className="font-display text-3xl font-semibold leading-tight">{t('history')}</h1>
+          <p className="text-sm text-ee-muted">{t('authHistSubtitle')}</p>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-slate-900 border border-slate-800">
-        <button
-          onClick={() => setActiveTab('scans')}
-          className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-            activeTab === 'scans' ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold' : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
-          }`}
-        >
-          <MapPin className="w-4 h-4" />
-          <span>{t('recentScans')} ({scans.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('shifts')}
-          className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
-            activeTab === 'shifts' ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md font-bold' : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
-          }`}
-        >
-          <Clock className="w-4 h-4" />
-          <span>Shifts Log ({shifts.length})</span>
-        </button>
-      </div>
-
-      {/* Tab Content: Scans */}
-      {activeTab === 'scans' && (
-        <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
-          {scans.length === 0 ? (
-            <p className="text-xs text-slate-500 text-center py-8">{t('noScans') || 'No scans recorded yet'}</p>
-          ) : (
-            <div className="space-y-3">
-              {scans.map((scan) => (
-                <div key={scan.id} className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between gap-3">
-                  <div>
-                    <span className="text-sm font-bold text-white block">{scan.checkpointName}</span>
-                    <span className="text-[11px] font-mono text-slate-400">
-                      {formatTimeHM(scan.scanTimestampDevice)} · GPS ±{scan.accuracyMeters || 10}m
-                    </span>
-                    {scan.distanceToCheckpointMeters != null && (
-                      <span className="text-[11px] text-slate-500 block mt-0.5">
-                        Distance: {formatDistance(scan.distanceToCheckpointMeters)}
-                      </span>
-                    )}
-                  </div>
-                  <Badge variant={scan.isValidProximity ? 'success' : 'danger'}>
-                    {scan.isValidProximity ? 'Verified' : 'Out of Range'}
-                  </Badge>
-                </div>
+      {!db ? (
+        <p className="text-base text-ee-danger-text" role="alert">
+          {t('authHistNoStorage')}
+        </p>
+      ) : (
+        <>
+          <div>
+            <label htmlFor={selectId} className="mb-1.5 block text-sm font-semibold text-ee-muted">
+              {t('authHistFilterLabel')}
+            </label>
+            <select
+              id={selectId}
+              value={selected ?? 'all'}
+              onChange={(event) => setChoice(event.target.value)}
+              disabled={!shiftsLoaded}
+              className="min-h-12 w-full rounded-xl border border-ee-border bg-ee-surface px-3 text-base text-ee-text focus:border-ee-primary focus:outline-none"
+              data-testid="history-shift-filter"
+            >
+              <option value="all">{t('authHistAllRecords')}</option>
+              {shiftOptions.map((option) => (
+                <option key={option.shiftId} value={option.shiftId}>
+                  {shiftOptionLabel(option, t)}
+                </option>
               ))}
-            </div>
-          )}
-        </Card>
-      )}
+            </select>
+          </div>
 
-      {/* Tab Content: Shifts */}
-      {activeTab === 'shifts' && (
-        <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
-          {shifts.length === 0 ? (
-            <p className="text-xs text-slate-500 text-center py-8">No shifts recorded yet</p>
-          ) : (
-            <div className="space-y-3">
-              {shifts.map((shift) => (
-                <div key={shift.id} className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between gap-3">
-                  <div>
-                    <span className="text-sm font-bold text-white block">
-                      {shift.shiftType === 'day' ? '☀️ Day Shift' : '🌙 Night Shift'}
-                    </span>
-                    <span className="text-[11px] font-mono text-slate-400">
-                      {formatTimeHM(shift.actualStart || shift.scheduledStart)} – {shift.actualEnd ? formatTimeHM(shift.actualEnd) : 'Active'}
-                    </span>
-                  </div>
-                  <Badge variant={shift.status === 'completed' ? 'neutral' : 'success'}>
-                    {shift.status.toUpperCase()}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
+          <div aria-live="polite" data-testid="history-list-region">
+            {(events === null || events.status === 'loading') && (
+              <p role="status" className="py-6 text-center text-base text-ee-muted">
+                {t('authLoading')}
+              </p>
+            )}
+            {events?.status === 'error' && (
+              <p role="alert" className="py-6 text-base text-ee-danger-text" data-testid="history-error">
+                {t('authHistLoadFailed', events.message)}
+              </p>
+            )}
+            {events?.status === 'ready' && rows.length === 0 && (
+              <p className="py-8 text-center text-base text-ee-muted" data-testid="history-empty">
+                {selected === 'all' ? t('authHistEmpty') : t('authHistEmptyShift')}
+              </p>
+            )}
+            {rows.length > 0 && (
+              <>
+                <ul className="divide-y divide-ee-border border-y border-ee-border" data-testid="history-list">
+                  {rows.map((row) => (
+                    <HistoryRow key={row.event.id} row={row} />
+                  ))}
+                </ul>
+                {rows.length >= HISTORY_LIMIT && (
+                  <p className="pt-3 text-sm text-ee-muted">{t('authHistLimited', HISTORY_LIMIT)}</p>
+                )}
+              </>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

@@ -44,3 +44,8 @@ next-env.d.ts
 supabase/.temp/
 
 .vercel
+
+# playwright
+/playwright-report/
+/test-results/
+!.env.example
