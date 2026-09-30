@@ -23,7 +23,6 @@ import {
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { I18nProvider } from '@/lib/i18n/context';
 import { Checkpoint } from '@/types/models';
 import { offlineDB } from '@/lib/offline/db';
 import { useAuth } from '@/context/AuthContext';
@@ -342,8 +341,7 @@ export default function AdminPortalPage() {
   };
 
   return (
-    <I18nProvider>
-      <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col font-sans">
+    <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col font-sans">
         {/* Toast Alert */}
         {toastMsg && (
           <div className="fixed top-16 left-4 right-4 z-50 p-3.5 bg-[#F0A53A] text-[#2A1A04] font-bold text-sm rounded-xl shadow-2xl text-center max-w-md mx-auto border border-[#F0A53A] animate-in slide-in-from-top-4 duration-200">
@@ -827,6 +825,5 @@ export default function AdminPortalPage() {
           )}
         </main>
       </div>
-    </I18nProvider>
   );
 }

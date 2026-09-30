@@ -94,9 +94,9 @@ export default function GuardHomePage() {
   // Greeting based on time of day
   const getGreeting = () => {
     const hour = new Date().getHours();
-    if (hour >= 5 && hour < 12) return 'Goeiemôre / Good morning';
-    if (hour >= 12 && hour < 17) return 'Goeiemiddag / Good afternoon';
-    return 'Goeienaand / Good evening';
+    if (hour >= 5 && hour < 12) return t('greetingMorning') || 'Good morning';
+    if (hour >= 12 && hour < 17) return t('greetingAfternoon') || 'Good afternoon';
+    return t('greetingEvening') || 'Good evening';
   };
 
   // Sync state subscription
@@ -580,7 +580,7 @@ export default function GuardHomePage() {
               </span>
             )}
             <span className="text-[10px] font-mono text-[#9AA5B1] mt-1">
-              {shiftWindow.shiftType === 'day' ? '☀️ Dagskof / Day' : '🌙 Nagskof / Night'}
+              {shiftWindow.shiftType === 'day' ? (t('dayShift') || 'Day Shift') : (t('nightShift') || 'Night Shift')}
             </span>
           </div>
         </div>
@@ -596,7 +596,7 @@ export default function GuardHomePage() {
           <div className="flex items-center gap-2">
             <span className={`w-3 h-3 rounded-full ${isOnShift ? 'bg-[#76C08F] animate-pulse' : 'bg-[#9AA5B1]'}`} />
             <span className="text-xs font-bold tracking-wider uppercase text-[#E9E4D8]">
-              {isOnShift ? 'OP DIENS / ON DUTY' : 'AF DIENS / OFF DUTY'}
+              {isOnShift ? (t('onDuty') || 'ON DUTY') : (t('offDuty') || 'OFF DUTY')}
             </span>
           </div>
 
@@ -614,7 +614,7 @@ export default function GuardHomePage() {
               {isOnShift && shiftStartTime ? formatTimeHM(shiftStartTime) : '--:--'}
             </h2>
             <span className="text-xs text-[#9AA5B1]">
-              {isOnShift ? 'Inklok Tyd / Started On Duty' : 'Klok in enige tyd met selfie foto'}
+              {isOnShift ? (t('clockedInAt') || 'Started On Duty') : (t('clockInAnytime') || 'Clock in anytime with selfie photo')}
             </span>
           </div>
 
@@ -624,7 +624,7 @@ export default function GuardHomePage() {
               className="px-4 py-2.5 rounded-xl bg-[#212C38] hover:bg-[#B3261E] hover:text-white text-[#E0685C] border border-[#B3261E]/60 text-xs font-bold flex items-center gap-1.5 transition-colors"
             >
               <LogOut className="w-4 h-4" />
-              <span>Beëindig Diens</span>
+              <span>{t('endShiftBtn') || 'End Shift'}</span>
             </button>
           ) : (
             <Button
@@ -634,7 +634,7 @@ export default function GuardHomePage() {
               className="gap-1.5 px-5 font-bold shadow-md shadow-[#F0A53A]/25"
             >
               <Camera className="w-4 h-4 stroke-[2.5]" />
-              <span>Klok In (Selfie)</span>
+              <span>{t('startShiftBtn') || 'Clock In (Selfie)'}</span>
             </Button>
           )}
         </div>
@@ -645,7 +645,7 @@ export default function GuardHomePage() {
             <div className="flex items-center justify-between text-xs">
               <span className="text-[#76C08F] font-bold flex items-center gap-1.5">
                 <UserCheck className="w-4 h-4 text-[#76C08F]" />
-                <span>Klok-In Bevestig / Clock-In Verified</span>
+                <span>{t('clockInVerified') || 'Clock-In Verified'}</span>
               </span>
               <span className="font-mono text-[#E9E4D8] text-[11px]">
                 {clockInDetails?.time ? formatTimeHM(clockInDetails.time) : formatTimeHM(shiftStartTime || Date.now())}
@@ -677,7 +677,7 @@ export default function GuardHomePage() {
                   )}
                 </div>
                 <p className="text-[10px] text-[#9AA5B1]">
-                  Ligging en selfie foto suksesvol geregistreer op diensrekord.
+                  {t('locationSelfieRecorded') || 'Location and selfie photo registered on duty record.'}
                 </p>
               </div>
             </div>
@@ -690,7 +690,7 @@ export default function GuardHomePage() {
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-[#F0A53A]" />
               <span className="text-xs font-bold text-[#E9E4D8]">
-                Patrollie Rondte {currentRound?.roundNumber || 1}
+                {t('patrolRound', currentRound?.roundNumber || 1) || `Patrol Round ${currentRound?.roundNumber || 1}`}
               </span>
             </div>
             <span className="text-xs font-mono font-semibold text-[#F0A53A]">
@@ -701,8 +701,8 @@ export default function GuardHomePage() {
           {/* Patrol Progress Bar */}
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-[#9AA5B1]">
-              <span>Rondte Voltooiing</span>
-              <span className="font-bold text-[#E9E4D8]">{completedCount} / {totalCount} Punte</span>
+              <span>{t('roundCompletion') || 'Round Completion'}</span>
+              <span className="font-bold text-[#E9E4D8]">{completedCount} / {totalCount} {t('points') || 'Points'}</span>
             </div>
             <div className="w-full h-2.5 rounded-full bg-[#18212B] overflow-hidden border border-[#324050]">
               <div 
@@ -717,7 +717,7 @@ export default function GuardHomePage() {
       {/* 4. Large One-Handed Quick Actions */}
       <div className="space-y-2.5">
         <span className="text-[11px] font-bold uppercase tracking-wider text-[#9AA5B1] block px-1">
-          Veld Aksies / Quick Actions
+          {t('quickActions') || 'Quick Actions'}
         </span>
 
         {/* Primary Scan Button with Dawie's Punch Aesthetic */}
@@ -730,8 +730,8 @@ export default function GuardHomePage() {
               <QrCode className="w-7 h-7 text-[#2A1A04]" />
             </div>
             <div className="text-left">
-              <span className="block leading-none text-lg font-bold">Skandeer Patrolliepunt</span>
-              <span className="text-xs text-[#2A1A04]/80 font-medium mt-1 block">Scan QR-Kode of Tik NFC Skyfie</span>
+              <span className="block leading-none text-lg font-bold">{t('scanPatrolPoint') || 'Scan Patrol Point'}</span>
+              <span className="text-xs text-[#2A1A04]/80 font-medium mt-1 block">{t('scanQrOrNfc') || 'Scan QR Code or Tap NFC Tag'}</span>
             </div>
           </div>
           <ChevronRight className="w-6 h-6 text-[#2A1A04]" />
@@ -744,8 +744,8 @@ export default function GuardHomePage() {
               <div className="w-10 h-10 rounded-xl bg-[#18212B] border border-[#324050] flex items-center justify-center mb-3 text-[#F0A53A]">
                 <Car className="w-5 h-5" />
               </div>
-              <span className="text-sm font-bold text-[#E9E4D8] block">Voertuig Hek</span>
-              <span className="text-xs text-[#9AA5B1] block mt-0.5">Lisensieskyf &amp; Nommer</span>
+              <span className="text-sm font-bold text-[#E9E4D8] block">{t('vehicleGate') || 'Vehicle Gate'}</span>
+              <span className="text-xs text-[#9AA5B1] block mt-0.5">{t('vehicleGateDesc') || 'Licence disc & Plate'}</span>
             </div>
           </Link>
 
@@ -754,8 +754,8 @@ export default function GuardHomePage() {
               <div className="w-10 h-10 rounded-xl bg-[#18212B] border border-[#324050] flex items-center justify-center mb-3 text-[#E0685C]">
                 <AlertTriangle className="w-5 h-5" />
               </div>
-              <span className="text-sm font-bold text-[#E9E4D8] block">Rapporteer Insident</span>
-              <span className="text-xs text-[#9AA5B1] block mt-0.5">Draad, Vee, Noodknoppie</span>
+              <span className="text-sm font-bold text-[#E9E4D8] block">{t('reportIncident') || 'Report Incident'}</span>
+              <span className="text-xs text-[#9AA5B1] block mt-0.5">{t('reportIncidentDesc') || 'Fence, Livestock, Emergency'}</span>
             </div>
           </Link>
         </div>
@@ -766,10 +766,10 @@ export default function GuardHomePage() {
         <div className="flex items-center justify-between mb-3 pb-2 border-b border-[#324050]">
           <div className="flex items-center gap-2">
             <MapPin className="w-4 h-4 text-[#F0A53A]" />
-            <span className="text-sm font-bold text-[#E9E4D8]">Rondte Kontrolepunte</span>
+            <span className="text-sm font-bold text-[#E9E4D8]">{t('roundCheckpoints') || 'Round Checkpoints'}</span>
           </div>
           <Link href="/guard/patrol" className="text-xs font-semibold text-[#F0A53A] hover:underline">
-            Volledige Roete →
+            {t('fullRoute') || 'Full Route →'}
           </Link>
         </div>
 
@@ -793,7 +793,7 @@ export default function GuardHomePage() {
                 {isDone ? (
                   <CheckCircle2 className="w-4 h-4 text-[#76C08F]" />
                 ) : (
-                  <span className="text-[11px] font-medium text-[#9AA5B1]">Hangende</span>
+                  <span className="text-[11px] font-medium text-[#9AA5B1]">{t('pending') || 'Pending'}</span>
                 )}
               </div>
             );
@@ -805,9 +805,9 @@ export default function GuardHomePage() {
       {recentScans.length > 0 && (
         <div className="bg-[#212C38] border border-[#324050] rounded-2xl p-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-[#E9E4D8]">Onlangse Skanderings</span>
+            <span className="text-xs font-bold text-[#E9E4D8]">{t('recentScans') || 'Recent Scans'}</span>
             <Link href="/guard/history" className="text-[11px] text-[#F0A53A] hover:underline">
-              Bekyk Rekords
+              {t('viewRecords') || 'View Records'}
             </Link>
           </div>
           <div className="space-y-2">
@@ -817,7 +817,7 @@ export default function GuardHomePage() {
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[#9AA5B1] text-[11px]">{formatTimeHM(scan.scanTimestampDevice)}</span>
                   <Badge variant={scan.isValidProximity ? 'success' : 'danger'}>
-                    {scan.isValidProximity ? 'OK' : 'Afstand'}
+                    {scan.isValidProximity ? 'OK' : 'Distance'}
                   </Badge>
                 </div>
               </div>
@@ -833,7 +833,7 @@ export default function GuardHomePage() {
         onCapture={handleSelfieCapture}
         facingMode="user"
         isSelfie
-        title={selfieAction === 'start' ? 'Inklok Selfie / Clock-In Selfie' : 'Diens-Einde Selfie / Clock-Out'}
+        title={selfieAction === 'start' ? (t('startShift') || 'Clock In (Selfie)') : (t('endShift') || 'End Shift (Selfie)')}
       />
 
       <QrScannerModal
@@ -851,9 +851,9 @@ export default function GuardHomePage() {
             </div>
 
             <div>
-              <h3 className="text-lg font-bold text-[#E9E4D8] tracking-tight">Skof Voltooi / Shift Completed</h3>
+              <h3 className="text-lg font-bold text-[#E9E4D8] tracking-tight">{t('shiftCompletedTitle') || 'Shift Completed'}</h3>
               <p className="text-xs text-[#9AA5B1] mt-1">
-                Jou diensbywoning en patrollie skanderings is suksesvol aangeteken.
+                {t('shiftCompletedDesc') || 'Your duty attendance and patrol scans have been recorded successfully.'}
               </p>
             </div>
 

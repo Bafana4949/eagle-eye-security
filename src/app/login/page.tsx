@@ -6,11 +6,12 @@ import Image from 'next/image';
 import { Eye, EyeOff, ArrowRight, AlertCircle, Loader2, Globe, Check } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { I18nProvider } from '@/lib/i18n/context';
+import { useTranslation } from '@/lib/i18n/context';
 import { createClient } from '@/lib/supabase/client';
 
 export default function LoginPage() {
   const router = useRouter();
+  const { setLanguage } = useTranslation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -94,18 +95,12 @@ export default function LoginPage() {
 
   const handleConfirmLanguage = (chosenLang: 'en' | 'af' | 'zu') => {
     setSelectedLang(chosenLang);
-    try {
-      localStorage.setItem('eagle_eye_lang_v1', chosenLang);
-      document.documentElement.lang = chosenLang;
-    } catch (e) {
-      console.error('Failed to set language in storage', e);
-    }
+    setLanguage(chosenLang);
     router.push(pendingDestination);
   };
 
   return (
-    <I18nProvider>
-      <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col justify-center items-center p-4">
+    <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col justify-center items-center p-4">
         <div className="max-w-md w-full space-y-6">
           {/* Official Eagle Eye System Logo */}
           <div className="text-center space-y-3">
@@ -293,6 +288,5 @@ export default function LoginPage() {
           </div>
         )}
       </div>
-    </I18nProvider>
   );
 }

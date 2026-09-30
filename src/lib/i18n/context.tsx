@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { SupportedLanguage } from '@/types/models';
 import { translations, TranslationKey } from './translations';
 
@@ -26,8 +26,40 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
         // Storage unavailable
       }
     }
-    return 'en'; // Default language is English as requested
+    return 'en';
   });
+
+  useEffect(() => {
+    const syncLangFromStorage = () => {
+      try {
+        const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY) as SupportedLanguage;
+        if (stored === 'en' || stored === 'af' || stored === 'zu') {
+          setLanguageState(stored);
+          document.documentElement.lang = stored;
+        }
+      } catch {
+        // Storage unavailable
+      }
+    };
+
+    syncLangFromStorage();
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === LANGUAGE_STORAGE_KEY && e.newValue) {
+        if (e.newValue === 'en' || e.newValue === 'af' || e.newValue === 'zu') {
+          setLanguageState(e.newValue as SupportedLanguage);
+          document.documentElement.lang = e.newValue;
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('eagle_eye_lang_change', syncLangFromStorage);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('eagle_eye_lang_change', syncLangFromStorage);
+    };
+  }, []);
 
   const setLanguage = (lang: SupportedLanguage) => {
     setLanguageState(lang);
@@ -35,6 +67,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       try {
         localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
         document.documentElement.lang = lang;
+        window.dispatchEvent(new Event('eagle_eye_lang_change'));
       } catch {
         // Fallback
       }

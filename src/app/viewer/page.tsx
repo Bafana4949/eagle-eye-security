@@ -12,7 +12,6 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { MetricCard } from '@/components/ui/MetricCard';
-import { I18nProvider } from '@/lib/i18n/context';
 import { useAuth } from '@/context/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 
@@ -135,8 +134,7 @@ export default function ClientViewerPortal() {
   };
 
   return (
-    <I18nProvider>
-      <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col font-sans">
+    <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col font-sans">
         {/* Top Header */}
         <header className="sticky top-0 z-30 bg-[#18212B]/95 backdrop-blur-md border-b border-[#324050] px-4 py-3">
           <div className="max-w-6xl mx-auto flex items-center justify-between">
@@ -405,6 +403,5 @@ export default function ClientViewerPortal() {
           )}
         </main>
       </div>
-    </I18nProvider>
   );
 }

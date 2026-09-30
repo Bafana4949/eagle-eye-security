@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Barlow, Barlow_Condensed } from "next/font/google";
 import { PwaRegistrar } from "@/components/shared/PwaRegistrar";
 import { AuthProvider } from "@/context/AuthContext";
+import { I18nProvider } from "@/lib/i18n/context";
 import "./globals.css";
 
 const barlow = Barlow({
@@ -48,7 +49,9 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-[#18212B] text-[#E9E4D8]">
         <PwaRegistrar />
-        <AuthProvider>{children}</AuthProvider>
+        <I18nProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </I18nProvider>
       </body>
     </html>
   );
