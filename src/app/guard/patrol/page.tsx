@@ -20,6 +20,7 @@ import { validateProximity, formatDistance } from '@/lib/gps/haversine';
 import { Checkpoint, PatrolScan } from '@/types/models';
 import { formatTimeHM } from '@/features/shifts/shiftCalculator';
 import { useAuth } from '@/context/AuthContext';
+import { DAWIE_FARM_CHECKPOINTS, matchCheckpoint } from '@/lib/patrol/checkpoints';
 
 interface ScanVerificationState {
   checkpointName: string;
@@ -79,7 +80,11 @@ export default function GuardPatrolPage() {
   useEffect(() => {
     const loadCheckpoints = async () => {
       if (offlineDB) {
-        const cps = await offlineDB.checkpoints.toArray();
+        let cps = await offlineDB.checkpoints.toArray();
+        if (cps.length === 0) {
+          cps = DAWIE_FARM_CHECKPOINTS;
+          await offlineDB.checkpoints.bulkPut(cps);
+        }
         setCheckpoints(cps);
 
         const today = new Date().toISOString().split('T')[0];
@@ -128,16 +133,7 @@ export default function GuardPatrolPage() {
       return;
     }
 
-    // Match checkpoint by QR token, normalized NFC serial, or legacy code
-    const normalizedId = cleanId.replace(/:/g, '').toUpperCase();
-    const matchedCp = checkpoints.find(
-      (c) =>
-        c.qrCodeHash === cleanId ||
-        cleanId.includes(c.qrCodeHash) ||
-        (c.nfcUid && (c.nfcUid === cleanId || c.nfcUid.replace(/:/g, '').toUpperCase() === normalizedId)) ||
-        // Support Dawie's legacy physical QR cards: PLAAS-CP:CP1, etc.
-        (cleanId.startsWith('PLAAS-CP:') && (c.id === cleanId.slice(9) || c.orderIndex.toString() === cleanId.slice(10)))
-    );
+    const matchedCp = matchCheckpoint(cleanId, checkpoints);
 
     if (!matchedCp) {
       showToast(t('unknownCheckpoint') || 'Unrecognized checkpoint code');

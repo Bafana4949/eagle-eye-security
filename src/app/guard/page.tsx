@@ -43,6 +43,7 @@ import {
 } from '@/lib/whatsapp/summary';
 import { useAuth } from '@/context/AuthContext';
 import { createClient } from '@/lib/supabase/client';
+import { DAWIE_FARM_CHECKPOINTS, matchCheckpoint } from '@/lib/patrol/checkpoints';
 
 interface ClockInDetails {
   time: number;
@@ -188,53 +189,8 @@ export default function GuardHomePage() {
 
         let cps = await offlineDB.checkpoints.toArray();
         if (cps.length === 0) {
-          const defaultCps: Checkpoint[] = [
-            {
-              id: 'CP1',
-              siteId,
-              name: 'Hoofhek / Main Gate',
-              qrCodeHash: 'EE-CP-MAIN-GATE-01',
-              latitude: -25.684120,
-              longitude: 27.814520,
-              permittedRadiusMeters: 50,
-              orderIndex: 1,
-              isActive: true
-            },
-            {
-              id: 'CP2',
-              siteId,
-              name: 'Skaapkraal / Sheep Kraal',
-              qrCodeHash: 'EE-CP-SHEEP-KRAAL-02',
-              latitude: -25.684890,
-              longitude: 27.815210,
-              permittedRadiusMeters: 60,
-              orderIndex: 2,
-              isActive: true
-            },
-            {
-              id: 'CP3',
-              siteId,
-              name: 'Hoenderhok / Poultry Sheds',
-              qrCodeHash: 'EE-CP-POULTRY-SHED-03',
-              latitude: -25.683500,
-              longitude: 27.814010,
-              permittedRadiusMeters: 50,
-              orderIndex: 3,
-              isActive: true
-            },
-            {
-              id: 'CP4',
-              siteId,
-              name: 'Stoor & Werkswinkel / Workshop',
-              qrCodeHash: 'EE-CP-WORKSHOP-04',
-              latitude: -25.684300,
-              longitude: 27.813800,
-              permittedRadiusMeters: 50,
-              orderIndex: 4,
-              isActive: true
-            }
-          ];
-          await offlineDB.checkpoints.bulkAdd(defaultCps);
+          const defaultCps = DAWIE_FARM_CHECKPOINTS.map((c) => ({ ...c, siteId }));
+          await offlineDB.checkpoints.bulkPut(defaultCps);
           cps = defaultCps;
         }
         setCheckpoints(cps);
@@ -447,9 +403,7 @@ export default function GuardHomePage() {
 
   // Checkpoint Scan Handler
   const handleScanSuccess = async (decodedText: string) => {
-    const matchedCp = checkpoints.find(
-      (c) => c.qrCodeHash === decodedText || decodedText.includes(c.qrCodeHash)
-    );
+    const matchedCp = matchCheckpoint(decodedText, checkpoints);
 
     if (!matchedCp) {
       showToast(t('unknownCheckpoint') || 'Unrecognized checkpoint code', 'amber');
