@@ -103,8 +103,9 @@ export default function LoginPage() {
     <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col justify-center items-center p-4">
         <div className="max-w-md w-full space-y-6">
           {/* Official Eagle Eye System Logo */}
-          <div className="text-center space-y-3">
-            <div className="relative w-24 h-24 mx-auto rounded-2xl overflow-hidden shadow-2xl shadow-[#F0A53A]/20 border-2 border-[#F0A53A]/80 bg-[#18212B]">
+          <div className="text-center">
+            <h1 className="sr-only">Eagle Eye Security</h1>
+            <div className="relative w-36 h-36 sm:w-44 sm:h-44 mx-auto rounded-3xl overflow-hidden shadow-2xl shadow-[#F0A53A]/25 border-2 border-[#F0A53A]/80 bg-[#18212B] transition-transform hover:scale-105 duration-200">
               <Image
                 src="/Eagle_Eye_Logo.jpg"
                 alt="Eagle Eye Security"
@@ -112,14 +113,6 @@ export default function LoginPage() {
                 className="object-cover"
                 priority
               />
-            </div>
-            <div>
-              <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-[#E9E4D8]">
-                EAGLE EYE SECURITY
-              </h1>
-              <p className="text-xs text-[#9AA5B1] uppercase tracking-wider font-semibold mt-1">
-                Aiguille Security &amp; Dawie Boerdery
-              </p>
             </div>
           </div>
 
