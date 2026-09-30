@@ -84,10 +84,22 @@ export default function GuardHomePage() {
   const rounds = generateShiftRounds(shiftWindow);
   const currentRound = rounds.find((r) => r.isCurrent) || rounds[0];
 
-  // Dynamic Session & Tactical IDs (never hardcoded)
-  const guardId = user?.id || profile?.id || 'e495f1f3-72a0-4231-86fb-617c4624bbe5';
+  // Dynamic Session & Tactical IDs (prioritize one-tap selected guard or logged-in auth user)
+  const [selectedGuard] = useState<{ id: string; name: string; employeeNo?: string } | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('eagle_eye_selected_guard');
+        if (stored) return JSON.parse(stored);
+      } catch {
+        // ignore
+      }
+    }
+    return null;
+  });
+
+  const guardId = selectedGuard?.id || user?.id || profile?.id || 'e495f1f3-72a0-4231-86fb-617c4624bbe5';
   const siteId = assignedSite?.id || '22222222-2222-2222-2222-222222222222';
-  const guardName = profile ? `${profile.first_name} ${profile.last_name}` : 'Sipho Khoza';
+  const guardName = selectedGuard?.name || (profile ? `${profile.first_name} ${profile.last_name}` : 'Sipho Khoza');
   const siteName = assignedSite?.name || 'Dawie Boerdery - Main Farm';
   const companyName = 'Aiguille Security';
 

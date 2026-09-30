@@ -27,6 +27,9 @@ export function HeaderBar({ guardName }: { guardName?: string }) {
 
   const handleLogout = async () => {
     try {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('eagle_eye_selected_guard');
+      }
       await signOut();
     } finally {
       router.push('/login');
