@@ -551,52 +551,7 @@ export default function GuardHomePage() {
         </div>
       )}
 
-      {/* 1. Tactical Header with Official Eagle Eye Logo & Greeting */}
-      <div className="bg-[#212C38] border border-[#324050] rounded-2xl p-4 shadow-lg">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="relative w-12 h-12 rounded-xl overflow-hidden border-2 border-[#F0A53A]/80 shadow-md shadow-[#F0A53A]/20 flex-none bg-[#18212B]">
-              <Image
-                src="/Eagle_Eye_Logo.jpg"
-                alt="Eagle Eye System"
-                fill
-                className="object-cover"
-                priority
-              />
-            </div>
-            <div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-[#F0A53A] block">
-                {getGreeting()}
-              </span>
-              <h1 className="text-xl font-bold text-[#E9E4D8] tracking-tight">
-                {guardName}
-              </h1>
-              <p className="text-xs text-[#9AA5B1] flex items-center gap-1.5 mt-0.5">
-                <Shield className="w-3.5 h-3.5 text-[#F0A53A]" />
-                <span>{companyName} · {siteName}</span>
-              </p>
-            </div>
-          </div>
-
-          {/* Sync Status Badge */}
-          <div className="flex flex-col items-end">
-            {syncSummary.isOnline ? (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-[#76C08F]/20 border border-[#76C08F]/50 text-[#76C08F]">
-                <Wifi className="w-3 h-3 text-[#76C08F]" />
-                <span>ONLINE</span>
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-[#F0A53A]/20 border border-[#F0A53A]/50 text-[#F0A53A]">
-                <WifiOff className="w-3 h-3 text-[#F0A53A]" />
-                <span>{syncSummary.pendingCount} QUEUED</span>
-              </span>
-            )}
-            <span className="text-[10px] font-mono text-[#9AA5B1] mt-1">
-              {shiftWindow.shiftType === 'day' ? (t('dayShift') || 'Day Shift') : (t('nightShift') || 'Night Shift')}
-            </span>
-          </div>
-        </div>
-      </div>
+      <h1 className="sr-only">Guard Shift Operations</h1>
 
       {/* 2. Primary Shift Status Card */}
       <div className={`p-4 rounded-2xl border transition-all ${
