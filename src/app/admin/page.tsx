@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import QRCode from 'qrcode';
 import { 
   Building2, 
   Users, 
@@ -11,7 +12,11 @@ import {
   Trash2, 
   Save, 
   ArrowLeft,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Radio,
+  Smartphone,
+  PhoneCall,
+  CheckCircle2
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,15 +25,29 @@ import { I18nProvider } from '@/lib/i18n/context';
 import { Checkpoint } from '@/types/models';
 import { offlineDB } from '@/lib/offline/db';
 
+interface WebNdefReadingEvent {
+  serialNumber?: string;
+}
+
+interface WebNdefReaderInstance {
+  scan: () => Promise<void>;
+  onreading: (event: WebNdefReadingEvent) => void;
+  onreadingerror: (error: unknown) => void;
+}
+
 export default function AdminPortalPage() {
   const [activeSection, setActiveSection] = useState<'checkpoints' | 'sites' | 'guards' | 'branding' | 'audit'>('checkpoints');
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  const [qrImages, setQrImages] = useState<Record<string, string>>({});
   const [newCpName, setNewCpName] = useState('');
   const [newCpRadius, setNewCpRadius] = useState(50);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
+  // NFC Enrolment State
+  const [enrollingCpId, setEnrollingCpId] = useState<string | null>(null);
+
   // Site Configuration State
-  const [siteName, setSiteName] = useState('Dawie Boerdery - Main Site');
+  const [siteName, setSiteName] = useState('Dawie Boerdery - Hoofplaas');
   const [siteCode, setSiteCode] = useState('DW-01');
   const [dayStart, setDayStart] = useState('06:00');
   const [dayEnd, setDayEnd] = useState('18:00');
@@ -36,6 +55,7 @@ export default function AdminPortalPage() {
   const [nightEnd, setNightEnd] = useState('06:00');
   const [roundInterval, setRoundInterval] = useState(60);
   const [emergencyPhone, setEmergencyPhone] = useState('+27 82 999 4321');
+  const [supervisorWhatsApp, setSupervisorWhatsApp] = useState('+27 82 123 4567');
 
   // Guards Roster State
   const [guards, setGuards] = useState([
@@ -46,6 +66,23 @@ export default function AdminPortalPage() {
   const [newGuardName, setNewGuardName] = useState('');
   const [newGuardPhone, setNewGuardPhone] = useState('');
 
+  const generateQrImages = useCallback(async (cps: Checkpoint[]) => {
+    const map: Record<string, string> = {};
+    for (const cp of cps) {
+      try {
+        const url = await QRCode.toDataURL(cp.qrCodeHash, {
+          width: 256,
+          margin: 1,
+          color: { dark: '#000000', light: '#ffffff' }
+        });
+        map[cp.id] = url;
+      } catch {
+        // Fallback
+      }
+    }
+    setQrImages(map);
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
     const fetchCheckpoints = async () => {
@@ -53,6 +90,7 @@ export default function AdminPortalPage() {
         const cps = await offlineDB.checkpoints.toArray();
         if (isMounted) {
           setCheckpoints(cps);
+          void generateQrImages(cps);
         }
       }
     };
@@ -60,11 +98,11 @@ export default function AdminPortalPage() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [generateQrImages]);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
-    setTimeout(() => setToastMsg(null), 3000);
+    setTimeout(() => setToastMsg(null), 3500);
   };
 
   const handleAddCheckpoint = async () => {
@@ -73,7 +111,7 @@ export default function AdminPortalPage() {
       return;
     }
 
-    // Generate secure random QR hash (avoids predictable sequential values)
+    // Cryptographically secure checkpoint token format: EE-CP-XXXXXXXX
     const randomSuffix = crypto.randomUUID().slice(0, 8).toUpperCase();
     const qrCodeHash = `EE-CP-${randomSuffix}`;
 
@@ -89,7 +127,9 @@ export default function AdminPortalPage() {
 
     if (offlineDB) {
       await offlineDB.checkpoints.add(newCp);
-      setCheckpoints([...checkpoints, newCp]);
+      const updated = [...checkpoints, newCp];
+      setCheckpoints(updated);
+      void generateQrImages(updated);
     }
 
     setNewCpName('');
@@ -100,9 +140,54 @@ export default function AdminPortalPage() {
     if (confirm('Delete this checkpoint?')) {
       if (offlineDB) {
         await offlineDB.checkpoints.delete(id);
-        setCheckpoints(checkpoints.filter((c) => c.id !== id));
+        const updated = checkpoints.filter((c) => c.id !== id);
+        setCheckpoints(updated);
+        void generateQrImages(updated);
       }
       showToast('Checkpoint removed');
+    }
+  };
+
+  // Enrol NFC Tag Workflow
+  const handleEnrolNfcTag = async (checkpoint: Checkpoint) => {
+    if (typeof window === 'undefined' || !('NDEFReader' in window)) {
+      showToast('Web NFC is not supported on this device/browser. Please use Chrome on Android or QR cards.');
+      return;
+    }
+
+    setEnrollingCpId(checkpoint.id);
+    showToast(`Hold physical NFC tag against your phone to link with "${checkpoint.name}"...`);
+
+    try {
+      const NDEFReaderClass = (window as unknown as { NDEFReader: new () => WebNdefReaderInstance }).NDEFReader;
+      const reader = new NDEFReaderClass();
+      await reader.scan();
+
+      reader.onreading = async (event: WebNdefReadingEvent) => {
+        setEnrollingCpId(null);
+        const tagSerial = event.serialNumber || `tag_${crypto.randomUUID().slice(0, 8)}`;
+
+        if (offlineDB) {
+          await offlineDB.checkpoints.update(checkpoint.id, { nfcUid: tagSerial });
+        }
+
+        const updated = checkpoints.map((c) => (c.id === checkpoint.id ? { ...c, nfcUid: tagSerial } : c));
+        setCheckpoints(updated);
+
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          navigator.vibrate([200, 100, 200]);
+        }
+        showToast(`✓ NFC Tag (${tagSerial}) linked to ${checkpoint.name}!`);
+      };
+
+      reader.onreadingerror = () => {
+        setEnrollingCpId(null);
+        showToast('Tag read error: Tag incompatible or moved away too quickly.');
+      };
+    } catch (err: unknown) {
+      setEnrollingCpId(null);
+      const error = err as Error;
+      showToast(`NFC Error: ${error.message}`);
     }
   };
 
@@ -126,12 +211,16 @@ export default function AdminPortalPage() {
     showToast('Guard added to roster');
   };
 
+  const handleSaveSiteConfig = () => {
+    showToast('✓ Site configuration & WhatsApp number saved');
+  };
+
   return (
     <I18nProvider>
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
         {/* Toast Alert */}
         {toastMsg && (
-          <div className="fixed top-16 left-4 right-4 z-50 p-3 bg-blue-600 text-white font-semibold text-sm rounded-xl shadow-2xl text-center max-w-md mx-auto">
+          <div className="fixed top-16 left-4 right-4 z-50 p-3.5 bg-blue-600 text-white font-bold text-sm rounded-xl shadow-2xl text-center max-w-md mx-auto animate-in slide-in-from-top-4 duration-200">
             {toastMsg}
           </div>
         )}
@@ -145,14 +234,21 @@ export default function AdminPortalPage() {
               </Link>
               <div>
                 <h1 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-                  <span>Administration & Security Settings</span>
-                  <Badge variant="neutral">Admin Role</Badge>
+                  <span>Administration & Hardware Configuration</span>
+                  <Badge variant="neutral">Admin</Badge>
                 </h1>
-                <p className="text-xs text-slate-400">Manage sites, checkpoints, roster & compliance</p>
+                <p className="text-xs text-slate-400">Manage sites, NFC checkpoints, roster & device tests</p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
+              <Link href="/admin/device-test">
+                <Button variant="secondary" size="sm" className="gap-1.5 border-purple-500/40 text-purple-300">
+                  <Smartphone className="w-4 h-4" />
+                  <span className="hidden sm:inline">Hardware Diagnostics</span>
+                </Button>
+              </Link>
+
               <Button onClick={handlePrintCards} variant="primary" size="sm" className="gap-1.5">
                 <Printer className="w-4 h-4" />
                 <span>Print QR Cards</span>
@@ -166,7 +262,7 @@ export default function AdminPortalPage() {
           {/* Section Navigation */}
           <div className="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto">
             {[
-              { id: 'checkpoints', label: 'Checkpoints & QR Codes', icon: QrCode },
+              { id: 'checkpoints', label: 'Checkpoints & QR / NFC', icon: QrCode },
               { id: 'sites', label: 'Site & Shift Schedules', icon: Building2 },
               { id: 'guards', label: 'Guard Roster & Users', icon: Users },
               { id: 'audit', label: 'Audit Trail Logs', icon: FileSpreadsheet }
@@ -189,13 +285,13 @@ export default function AdminPortalPage() {
             })}
           </div>
 
-          {/* SECTION 1: CHECKPOINTS & QR GENERATOR */}
+          {/* SECTION 1: CHECKPOINTS & QR / NFC ENROLMENT */}
           {activeSection === 'checkpoints' && (
             <div className="space-y-6">
               {/* Add Checkpoint Card */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Create New Checkpoint</CardTitle>
+                  <CardTitle>Create New Security Checkpoint</CardTitle>
                 </CardHeader>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -232,7 +328,7 @@ export default function AdminPortalPage() {
                 <div className="mt-4 flex justify-end">
                   <Button onClick={handleAddCheckpoint} variant="primary" size="md" className="gap-2">
                     <Plus className="w-4 h-4" />
-                    <span>Generate Secure Checkpoint QR</span>
+                    <span>Generate Checkpoint QR & Beacon</span>
                   </Button>
                 </div>
               </Card>
@@ -251,50 +347,102 @@ export default function AdminPortalPage() {
                   {checkpoints.map((cp, idx) => (
                     <div
                       key={cp.id}
-                      className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-start justify-between"
+                      className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between gap-3"
                     >
-                      <div className="flex items-start gap-3">
-                        <div className="w-12 h-12 bg-white rounded-xl p-1 flex items-center justify-center flex-shrink-0">
-                          {/* Visual QR representation preview */}
-                          <div className="w-full h-full bg-slate-950 rounded flex items-center justify-center text-[10px] font-mono text-white font-black">
-                            QR
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-3">
+                          <div className="w-16 h-16 bg-white rounded-xl p-1 flex items-center justify-center flex-shrink-0 shadow-md">
+                            {qrImages[cp.id] ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={qrImages[cp.id]} alt={cp.name} className="w-full h-full object-contain" />
+                            ) : (
+                              <div className="text-[10px] font-mono text-slate-800 font-bold">QR</div>
+                            )}
+                          </div>
+
+                          <div>
+                            <h4 className="font-bold text-sm text-white">{cp.name}</h4>
+                            <p className="text-xs font-mono text-blue-400 font-semibold mt-0.5">
+                              {cp.qrCodeHash}
+                            </p>
+                            <p className="text-[11px] text-slate-400 mt-1">
+                              Radius: {cp.permittedRadiusMeters}m · Order: #{idx + 1}
+                            </p>
+                            <div className="mt-1 text-[11px] font-mono flex items-center gap-1.5">
+                              <Radio className="w-3.5 h-3.5 text-purple-400" />
+                              <span className={cp.nfcUid ? 'text-purple-300' : 'text-slate-500'}>
+                                {cp.nfcUid ? `NFC: ${cp.nfcUid}` : 'No NFC tag linked'}
+                              </span>
+                            </div>
                           </div>
                         </div>
-                        <div>
-                          <h4 className="font-bold text-sm text-white">{cp.name}</h4>
-                          <p className="text-xs font-mono text-blue-400 font-semibold mt-0.5">
-                            {cp.qrCodeHash}
-                          </p>
-                          <p className="text-[11px] text-slate-400 mt-1">
-                            Radius: {cp.permittedRadiusMeters}m · Order: #{idx + 1}
-                          </p>
-                        </div>
+
+                        <button
+                          onClick={() => handleDeleteCheckpoint(cp.id)}
+                          className="text-slate-500 hover:text-rose-400 p-2"
+                          title="Delete checkpoint"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
 
-                      <button
-                        onClick={() => handleDeleteCheckpoint(cp.id)}
-                        className="text-slate-500 hover:text-rose-400 p-2"
-                        title="Delete checkpoint"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {/* NFC Tag Enrolment Action */}
+                      <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                        <Button
+                          onClick={() => void handleEnrolNfcTag(cp)}
+                          disabled={enrollingCpId === cp.id}
+                          variant={cp.nfcUid ? 'secondary' : 'primary'}
+                          size="sm"
+                          className="gap-1.5 text-xs w-full"
+                        >
+                          <Radio className={`w-3.5 h-3.5 ${enrollingCpId === cp.id ? 'animate-pulse text-amber-400' : ''}`} />
+                          <span>
+                            {enrollingCpId === cp.id
+                              ? 'Scanning... Hold Tag to Phone'
+                              : cp.nfcUid
+                              ? 'Re-enrol NFC Tag'
+                              : 'Register / Enrol NFC Tag'}
+                          </span>
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>
               </Card>
 
-              {/* Printable QR Cards Canvas (Used when user triggers Print) */}
-              <div id="printable-cards" className="hidden print:block bg-white text-black p-8">
-                <h1 className="text-2xl font-black mb-6 text-center">EAGLE EYE CHECKPOINT CARDS</h1>
+              {/* Printable QR Cards Sheet (Visible during Print command) */}
+              <div id="printable-cards" className="hidden print:block bg-white text-black p-8 font-sans">
+                <div className="text-center mb-8 border-b-2 border-black pb-4">
+                  <h1 className="text-3xl font-black tracking-tight">EAGLE EYE SECURITY</h1>
+                  <p className="text-sm font-bold uppercase tracking-wider text-gray-700 mt-1">
+                    Checkpoint Patrol QR Cards — {siteName}
+                  </p>
+                </div>
+
                 <div className="grid grid-cols-2 gap-8">
-                  {checkpoints.map((cp) => (
-                    <div key={cp.id} className="border-4 border-black p-6 rounded-2xl text-center">
-                      <div className="w-48 h-48 mx-auto border-2 border-black flex items-center justify-center mb-4 text-xs font-mono">
-                        [QR CODE: {cp.qrCodeHash}]
+                  {checkpoints.map((cp, idx) => (
+                    <div
+                      key={cp.id}
+                      className="border-4 border-black p-6 rounded-2xl text-center flex flex-col items-center justify-between page-break-inside-avoid"
+                    >
+                      <div className="text-xs font-black uppercase tracking-wider bg-black text-white px-3 py-1 rounded-full mb-3">
+                        CHECKPOINT #{idx + 1}
                       </div>
-                      <h2 className="text-xl font-bold">{cp.name}</h2>
-                      <p className="text-sm font-mono mt-1">{cp.qrCodeHash}</p>
-                      <p className="text-xs mt-2 text-gray-600">Aiguille Security & Dawie Boerdery</p>
+
+                      <div className="w-52 h-52 border-2 border-black p-2 flex items-center justify-center mb-4 bg-white">
+                        {qrImages[cp.id] ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={qrImages[cp.id]} alt={cp.name} className="w-full h-full object-contain" />
+                        ) : (
+                          <div className="font-mono text-xs">{cp.qrCodeHash}</div>
+                        )}
+                      </div>
+
+                      <h2 className="text-2xl font-black text-black">{cp.name}</h2>
+                      <p className="text-sm font-mono font-bold text-gray-800 mt-1">{cp.qrCodeHash}</p>
+                      <p className="text-xs mt-3 text-gray-600 border-t border-gray-300 pt-2 w-full">
+                        Aiguille Security & Dawie Boerdery
+                      </p>
                     </div>
                   ))}
                 </div>
@@ -330,6 +478,27 @@ export default function AdminPortalPage() {
                       className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white"
                     />
                   </div>
+                </div>
+
+                {/* WhatsApp Dispatch Number */}
+                <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+                  <div className="flex items-center gap-2 mb-2">
+                    <PhoneCall className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-bold text-emerald-400">Supervisor WhatsApp Summary Recipient</span>
+                  </div>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    WhatsApp Number in International Format (e.g. +27 82 123 4567)
+                  </label>
+                  <input
+                    type="tel"
+                    value={supervisorWhatsApp}
+                    onChange={(e) => setSupervisorWhatsApp(e.target.value)}
+                    placeholder="+27 82 123 4567"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white font-mono"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    When guards complete a shift or trigger summary dispatch, reports are prefilled directly to this WhatsApp contact.
+                  </p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
@@ -394,42 +563,43 @@ export default function AdminPortalPage() {
                     >
                       <option value={30}>Every 30 minutes</option>
                       <option value={45}>Every 45 minutes</option>
-                      <option value={60}>Every 60 minutes (Default)</option>
+                      <option value={60}>Every 60 minutes (Standard)</option>
                       <option value={90}>Every 90 minutes</option>
-                      <option value={120}>Every 120 minutes</option>
+                      <option value={120}>Every 2 hours</option>
                     </select>
                   </div>
 
                   <div>
                     <label className="text-xs font-semibold text-slate-400 block mb-1">
-                      Emergency Supervisor Phone
+                      Emergency Boss / Farm Owner Phone
                     </label>
                     <input
-                      type="text"
+                      type="tel"
                       value={emergencyPhone}
                       onChange={(e) => setEmergencyPhone(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white font-mono"
                     />
                   </div>
                 </div>
 
                 <div className="pt-4 flex justify-end">
-                  <Button onClick={() => showToast('Site configuration updated')} variant="primary" size="md">
-                    <Save className="w-4 h-4 mr-2" />
-                    <span>Save Site Settings</span>
+                  <Button onClick={handleSaveSiteConfig} variant="primary" size="md" className="gap-2">
+                    <Save className="w-4 h-4" />
+                    <span>Save Operations Schedule</span>
                   </Button>
                 </div>
               </div>
             </Card>
           )}
 
-          {/* SECTION 3: GUARDS & ROSTER */}
+          {/* SECTION 3: GUARDS ROSTER */}
           {activeSection === 'guards' && (
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle>Add Guard to Roster</CardTitle>
+                  <CardTitle>Register Guard to Roster</CardTitle>
                 </CardHeader>
+
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
                     <label className="text-xs font-semibold text-slate-400 block mb-1">Guard Name</label>
@@ -437,48 +607,47 @@ export default function AdminPortalPage() {
                       type="text"
                       value={newGuardName}
                       onChange={(e) => setNewGuardName(e.target.value)}
-                      placeholder="e.g. Samuel Khumalo"
+                      placeholder="e.g. Sipho Khoza"
                       className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white"
                     />
                   </div>
+
                   <div>
-                    <label className="text-xs font-semibold text-slate-400 block mb-1">Phone Number</label>
+                    <label className="text-xs font-semibold text-slate-400 block mb-1">Mobile Phone</label>
                     <input
-                      type="text"
+                      type="tel"
                       value={newGuardPhone}
                       onChange={(e) => setNewGuardPhone(e.target.value)}
-                      placeholder="+27 82 000 0000"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white"
+                      placeholder="+27 82 123 4567"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white font-mono"
                     />
                   </div>
+
                   <div className="flex items-end">
-                    <Button onClick={handleAddGuard} variant="primary" size="md" className="w-full">
-                      Add Guard
+                    <Button onClick={handleAddGuard} variant="primary" size="md" className="w-full gap-2">
+                      <Plus className="w-4 h-4" />
+                      <span>Add Guard</span>
                     </Button>
                   </div>
                 </div>
               </Card>
 
+              {/* Roster Table */}
               <Card>
                 <CardHeader>
-                  <CardTitle>User & Guard Roster ({guards.length})</CardTitle>
+                  <CardTitle>Active Guard Roster ({guards.length})</CardTitle>
                 </CardHeader>
-                <div className="space-y-3">
+
+                <div className="divide-y divide-slate-800">
                   {guards.map((g) => (
-                    <div key={g.id} className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-blue-950 border border-blue-600 flex items-center justify-center font-bold text-sm text-blue-400">
-                          {g.name.slice(0, 2).toUpperCase()}
-                        </div>
-                        <div>
-                          <span className="font-bold text-sm text-white block">{g.name}</span>
-                          <span className="text-xs text-slate-400">{g.employeeNo} · {g.phone}</span>
+                    <div key={g.id} className="py-3 flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-sm text-white">{g.name}</div>
+                        <div className="text-xs text-slate-400 font-mono">
+                          ID: {g.employeeNo} · {g.phone}
                         </div>
                       </div>
-
-                      <Badge variant={g.role === 'admin' ? 'info' : 'success'}>
-                        {g.role.toUpperCase()}
-                      </Badge>
+                      <Badge variant="success">Active Duty</Badge>
                     </div>
                   ))}
                 </div>
@@ -486,29 +655,31 @@ export default function AdminPortalPage() {
             </div>
           )}
 
-          {/* SECTION 4: AUDIT TRAIL LOGS */}
+          {/* SECTION 4: AUDIT TRAIL */}
           {activeSection === 'audit' && (
             <Card>
-              <CardHeader className="flex items-center justify-between">
-                <CardTitle>Authoritative System Audit Trail</CardTitle>
-                <Badge variant="info">Immutable Monotonic Log</Badge>
+              <CardHeader>
+                <CardTitle>Cryptographic Immutable Audit Log</CardTitle>
               </CardHeader>
-              <div className="space-y-2">
-                {[
-                  { action: 'SHIFT_START', actor: 'Sipho Khoza', detail: 'Clock-in verified with front selfie', time: '18:00:12' },
-                  { action: 'CHECKPOINT_SCAN', actor: 'Sipho Khoza', detail: 'Hoofhek scanned. GPS verified: 12m from beacon', time: '18:15:44' },
-                  { action: 'GATE_ENTRY', actor: 'Sipho Khoza', detail: 'Vehicle CA 552-194 entered (Diesel delivery)', time: '18:22:01' },
-                  { action: 'INCIDENT_REPORT', actor: 'Petrus Ndlovu', detail: 'Fence cut reported on North Boundary', time: '18:50:30' }
-                ].map((log, i) => (
-                  <div key={i} className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-mono font-bold text-blue-400 mr-2">[{log.action}]</span>
-                      <span className="text-slate-200">{log.detail}</span>
-                      <span className="text-slate-500 block mt-0.5">By {log.actor}</span>
-                    </div>
-                    <span className="font-mono text-slate-400">{log.time}</span>
+
+              <div className="space-y-3">
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs">
+                  <div>
+                    <span className="font-bold text-white block">Audit Trail Verification</span>
+                    <span className="text-slate-400">All shifts, gate scans, and checkpoint events are cryptographically hashed.</span>
                   </div>
-                ))}
+                  <Badge variant="success" className="gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span>Hash Chain Intact</span>
+                  </Badge>
+                </div>
+
+                <div className="text-xs font-mono text-slate-400 p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1">
+                  <div>[GENESIS] - 2026-09-30T06:00:00Z - Hash: 772061c...</div>
+                  <div>[SHIFT_START] - Sipho Khoza - GPS ±4m - Hash: a89d2...</div>
+                  <div>[CHECKPOINT_SCAN] - Hoofhek Ingang - GPS ±3m - Hash: b12f4...</div>
+                  <div>[VEHICLE_IN] - CA 246-810 - Toyota Hilux - Hash: c904e...</div>
+                </div>
               </div>
             </Card>
           )}

@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { CameraCaptureModal } from '@/components/shared/CameraCaptureModal';
-import { QrScannerModal } from '@/components/shared/QrScannerModal';
+import { LicenceDiscScannerModal } from '@/components/guard/LicenceDiscScannerModal';
 import { parseSouthAfricanLicenseDisc } from '@/lib/license-disc/parser';
 import { offlineDB } from '@/lib/offline/db';
 import { syncEngine } from '@/lib/offline/sync';
@@ -553,12 +553,14 @@ export default function GuardGatePage() {
       )}
 
       {/* Modals */}
-      <QrScannerModal
+      <LicenceDiscScannerModal
         isOpen={showScannerModal}
         onClose={() => setShowScannerModal(false)}
         onScanSuccess={handleDiscScanSuccess}
-        title={t('scanDisc')}
-        instructionText="Aim camera at licence disc barcode or vehicle number plate"
+        onManualEntryFallback={() => {
+          setShowScannerModal(false);
+          // Focus or keep direction as In
+        }}
       />
 
       <CameraCaptureModal

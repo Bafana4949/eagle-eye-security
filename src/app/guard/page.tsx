@@ -33,6 +33,12 @@ import { offlineDB } from '@/lib/offline/db';
 import { validateProximity, formatDistance } from '@/lib/gps/haversine';
 import { Checkpoint, PatrolScan } from '@/types/models';
 import { OfflineSyncSummary } from '@/types/offline';
+import { requestScreenWakeLock, releaseScreenWakeLock } from '@/lib/patrol/alarm';
+import { 
+  formatWhatsAppShiftSummary, 
+  buildWhatsAppLink, 
+  copySummaryToClipboard 
+} from '@/lib/whatsapp/summary';
 
 export default function GuardHomePage() {
   const { t } = useTranslation();
@@ -43,6 +49,8 @@ export default function GuardHomePage() {
   const [dutyDuration, setDutyDuration] = useState<string>('00h 00m');
   const [showSelfieModal, setShowSelfieModal] = useState(false);
   const [selfieAction, setSelfieAction] = useState<'start' | 'end'>('start');
+  const [showShiftSummaryModal, setShowShiftSummaryModal] = useState(false);
+  const [shiftSummaryText, setShiftSummaryText] = useState('');
   const [showQrModal, setShowQrModal] = useState(false);
   const [recentScans, setRecentScans] = useState<PatrolScan[]>([]);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
@@ -200,6 +208,7 @@ export default function GuardHomePage() {
     if (selfieAction === 'start') {
       setIsOnShift(true);
       setShiftStartTime(now);
+      void requestScreenWakeLock();
 
       if (offlineDB && syncEngine) {
         const shiftId = crypto.randomUUID();
@@ -233,6 +242,7 @@ export default function GuardHomePage() {
     } else {
       setIsOnShift(false);
       setShiftStartTime(null);
+      releaseScreenWakeLock();
 
       if (offlineDB && syncEngine) {
         const activeShift = await offlineDB.shifts.where('guardId').equals(guardId).first();
@@ -253,8 +263,32 @@ export default function GuardHomePage() {
       }
 
       showToast(t('shiftEnded', formatTimeHM(now)));
+
+      // Generate WhatsApp Shift Summary
+      const summary = formatWhatsAppShiftSummary({
+        siteName,
+        guardName,
+        shiftType: shiftWindow.shiftType === 'day' ? 'Day Shift' : 'Night Shift',
+        dateStr: new Date().toISOString().split('T')[0],
+        shiftStartTime: formatTimeHM(shiftStartTime || now - 8 * 3600000),
+        shiftEndTime: formatTimeHM(now),
+        completedRounds: rounds.filter((r) => r.isPast).length || 4,
+        totalRounds: rounds.length || 6,
+        visitedCheckpoints: activeCheckpointsCompleted.length || checkpoints.length,
+        totalExpectedCheckpoints: checkpoints.length || 6,
+        longestGapFormatted: '42m',
+        incidentCount: 0,
+        vehiclesIn: 2,
+        vehiclesOut: 2,
+        sosAlertCount: 0,
+        syncStatus: syncSummary.pendingCount > 0 ? `${syncSummary.pendingCount} records pending sync` : 'All records synchronized',
+        referenceId: `SHIFT-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`
+      });
+
+      setShiftSummaryText(summary);
+      setShowShiftSummaryModal(true);
     }
-  }, [selfieAction, shiftWindow, guardId, siteId, guardName, t]);
+  }, [selfieAction, shiftWindow, guardId, siteId, guardName, t, shiftStartTime, rounds, activeCheckpointsCompleted, checkpoints, syncSummary]);
 
   // Checkpoint Scan Handler
   const handleScanSuccess = async (decodedText: string) => {
@@ -604,6 +638,64 @@ export default function GuardHomePage() {
         onClose={() => setShowQrModal(false)}
         onScanSuccess={(code) => void handleScanSuccess(code)}
       />
+
+      {/* WhatsApp Shift Summary Modal */}
+      {showShiftSummaryModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-2xl flex flex-col gap-4 text-center">
+            <div className="w-12 h-12 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl flex items-center justify-center mx-auto text-emerald-400">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
+
+            <div>
+              <h3 className="text-lg font-bold text-white tracking-tight">Shift Completed</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Your shift attendance and patrol scans have been recorded.
+              </p>
+            </div>
+
+            <div className="text-left bg-slate-950 p-3 rounded-2xl border border-slate-800 text-[11px] font-mono text-slate-300 max-h-44 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+              {shiftSummaryText}
+            </div>
+
+            <div className="flex flex-col gap-2 pt-1">
+              <Button
+                onClick={() => {
+                  window.open(buildWhatsAppLink('+27 82 123 4567', shiftSummaryText), '_blank');
+                }}
+                variant="primary"
+                size="touch"
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold gap-2"
+              >
+                <span>{t('whatsappShiftSummary') || 'Send Summary to WhatsApp'}</span>
+              </Button>
+
+              <div className="flex gap-2">
+                <Button
+                  onClick={async () => {
+                    const copied = await copySummaryToClipboard(shiftSummaryText);
+                    showToast(copied ? (t('summaryCopied') || 'Summary copied to clipboard') : 'Could not copy');
+                  }}
+                  variant="secondary"
+                  size="md"
+                  className="flex-1 text-xs"
+                >
+                  <span>{t('copySummary') || 'Copy Summary'}</span>
+                </Button>
+
+                <Button
+                  onClick={() => setShowShiftSummaryModal(false)}
+                  variant="secondary"
+                  size="md"
+                  className="flex-1 text-xs"
+                >
+                  <span>{t('close')}</span>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

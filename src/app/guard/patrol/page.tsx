@@ -35,6 +35,7 @@ interface NdefReadingEvent {
 interface WebNdefReader {
   scan: () => Promise<void>;
   onreading: (event: NdefReadingEvent) => void;
+  onreadingerror?: (error: unknown) => void;
 }
 
 export default function GuardPatrolPage() {
@@ -100,11 +101,14 @@ export default function GuardPatrolPage() {
   };
 
   const handleScanProcess = useCallback(async (identifier: string, method: 'qr' | 'nfc') => {
+    const cleanId = identifier.trim();
     const matchedCp = checkpoints.find(
       (c) =>
-        c.qrCodeHash === identifier ||
-        identifier.includes(c.qrCodeHash) ||
-        (c.nfcUid && c.nfcUid === identifier)
+        c.qrCodeHash === cleanId ||
+        cleanId.includes(c.qrCodeHash) ||
+        (c.nfcUid && c.nfcUid === cleanId) ||
+        // Support Dawie's legacy physical QR cards: PLAAS-CP:CP1, etc.
+        (cleanId.startsWith('PLAAS-CP:') && (c.id === cleanId.slice(9) || c.orderIndex.toString() === cleanId.slice(10)))
     );
 
     if (!matchedCp) {
@@ -177,8 +181,16 @@ export default function GuardPatrolPage() {
   }, [checkpoints, currentGps, guardId, siteId, guardName, t]);
 
   const handleStartNfc = async () => {
-    if (typeof window === 'undefined' || !('NDEFReader' in window)) {
-      showToast('NFC is not supported on this browser/device');
+    if (typeof window === 'undefined') return;
+
+    const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isIOS) {
+      showToast('NFC scanning is not supported on iPhone web apps. Please scan the checkpoint QR code instead.');
+      return;
+    }
+
+    if (!('NDEFReader' in window)) {
+      showToast(t('nfcUnsupported') || 'NFC scanning is not supported on this device/browser. Please scan the checkpoint QR code instead.');
       return;
     }
 
@@ -187,15 +199,19 @@ export default function GuardPatrolPage() {
       const ndef = new NDEFReaderClass();
       await ndef.scan();
       setIsNfcActive(true);
-      showToast('NFC active: hold phone against beacon tag');
+      showToast(t('nfcHoldPhone') || 'Hold your phone against the checkpoint tag');
 
       ndef.onreading = (event: NdefReadingEvent) => {
         if (event.serialNumber) {
           void handleScanProcess(event.serialNumber, 'nfc');
         }
       };
+
+      ndef.onreadingerror = () => {
+        showToast('NFC read error: Tag incompatible or moved away too quickly. If this is an older 125 kHz RFID button, please scan the QR code instead.');
+      };
     } catch {
-      showToast('NFC permission denied or unavailable');
+      showToast('NFC permission denied or NFC is turned off in phone settings. Turn on NFC in Settings -> Connections -> NFC.');
     }
   };
 

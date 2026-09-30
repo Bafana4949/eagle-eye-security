@@ -134,7 +134,17 @@ export const translations = {
     camBlocked: 'Camera access blocked or unsupported',
     noQR: 'No QR code found in photo',
     aim: 'Point camera at the QR code',
-    photoInstead: 'Upload Photo'
+    photoInstead: 'Upload Photo',
+    scanLicenceDisc: 'Scan Licence Disc',
+    aimDisc: 'Point camera at the barcode on the vehicle licence disc',
+    enterManually: 'Enter Manually',
+    nfcUnsupported: 'NFC scanning is not supported on this device/browser. Please scan the checkpoint QR code instead.',
+    nfcHoldPhone: 'Hold your phone against the checkpoint tag',
+    nfcRegistered: 'NFC tag registered and linked to {0}',
+    roundOverdueAlarm: 'Round is late. No scan in {0}. Start your round now.',
+    whatsappShiftSummary: 'Send Shift Summary to WhatsApp',
+    copySummary: 'Copy Summary',
+    summaryCopied: 'Summary copied to clipboard'
   },
 
   af: {
@@ -270,7 +280,17 @@ export const translations = {
     camBlocked: 'Kamera is nie toegelaat nie.',
     noQR: 'Geen QR-kode in die foto nie.',
     aim: 'Rig die kamera op die QR-kaart',
-    photoInstead: 'Neem eerder foto'
+    photoInstead: 'Neem eerder foto',
+    scanLicenceDisc: 'Skandeer Lisensieskyf',
+    aimDisc: 'Rig die kamera op die strepieskode van die lisensieskyf',
+    enterManually: 'Tik Handmatig In',
+    nfcUnsupported: 'NFC-skandering word nie op hierdie toestel/blaaier ondersteun nie. Skandeer asseblief die QR-kaart.',
+    nfcHoldPhone: 'Hou jou foon teen die kontrolepunt-merker',
+    nfcRegistered: 'NFC-merker geregistreer en gekoppel aan {0}',
+    roundOverdueAlarm: 'Rondte is laat. Geen skandering in {0} nie. Begin nou jou rondte.',
+    whatsappShiftSummary: 'Stuur Skofopsomming op WhatsApp',
+    copySummary: 'Kopieer Opsomming',
+    summaryCopied: 'Opsomming gekopieer na knipbord'
   },
 
   zu: {
@@ -406,6 +426,16 @@ export const translations = {
     camBlocked: 'Ikhamera ayivunyelwe.',
     noQR: 'Ayikho ikhodi ye-QR esithombeni.',
     aim: 'Khomba ikhamera ekhadini le-QR',
-    photoInstead: 'Thatha isithombe kunalokho'
+    photoInstead: 'Thatha isithombe kunalokho',
+    scanLicenceDisc: 'Skena Idiski Yelayisensi',
+    aimDisc: 'Khomba ikhamera kubhakhodi yediski yelayisensi',
+    enterManually: 'Bhala Ngesandla',
+    nfcUnsupported: 'I-NFC ayisebenzi kule divayisi/isiphequluli. Sicela uskena ikhadi le-QR.',
+    nfcHoldPhone: 'Beka ifoni yakho ethegini yendawo yokuhlola',
+    nfcRegistered: 'Ithegi ye-NFC ibhalisiwe futhi ixhunywe ku-{0}',
+    roundOverdueAlarm: 'Umjikelezo uphuzile. Akukho okuskeniwe ku-{0}. Qala umjikelezo wakho manje.',
+    whatsappShiftSummary: 'Thumela Isifinyezo Seshifu ku-WhatsApp',
+    copySummary: 'Kopisha Isifinyezo',
+    summaryCopied: 'Isifinyezo sikopishelwe ebhodini lokunamathisela'
   }
 };
