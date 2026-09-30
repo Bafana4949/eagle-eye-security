@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { 
   ShieldCheck, 
@@ -139,8 +140,13 @@ export default function ClientViewerPortal() {
         <header className="sticky top-0 z-30 bg-[#18212B]/95 backdrop-blur-md border-b border-[#324050] px-4 py-3">
           <div className="max-w-6xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-radial from-[#FFC76A] via-[#F0A53A] to-[#C9801C] flex items-center justify-center text-[#2A1A04] shadow-md border border-[#F0A53A]/70">
-                <ShieldCheck className="w-6 h-6 stroke-[2.5]" />
+              <div className="relative w-9 h-9 rounded-xl overflow-hidden border border-[#F0A53A]/70 flex-none bg-[#18212B]">
+                <Image
+                  src="/Eagle_Eye_Logo.jpg"
+                  alt="Eagle Eye"
+                  fill
+                  className="object-cover"
+                />
               </div>
               <div>
                 <h1 className="text-base font-bold text-[#E9E4D8] tracking-tight flex items-center gap-2">

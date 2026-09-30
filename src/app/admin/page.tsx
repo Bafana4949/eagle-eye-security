@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import QRCode from 'qrcode';
@@ -356,6 +357,14 @@ export default function AdminPortalPage() {
               <Link href="/supervisor" className="p-2 rounded-xl bg-[#212C38] border border-[#324050] text-[#9AA5B1] hover:text-[#E9E4D8]">
                 <ArrowLeft className="w-5 h-5" />
               </Link>
+              <div className="relative w-9 h-9 rounded-xl overflow-hidden border border-[#F0A53A]/70 flex-none bg-[#18212B]">
+                <Image
+                  src="/Eagle_Eye_Logo.jpg"
+                  alt="Eagle Eye"
+                  fill
+                  className="object-cover"
+                />
+              </div>
               <div>
                 <h1 className="text-lg font-bold text-[#E9E4D8] tracking-tight flex items-center gap-2">
                   <span>Administration & Hardware Configuration</span>

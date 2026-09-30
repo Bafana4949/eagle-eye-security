@@ -30,6 +30,10 @@ export const metadata: Metadata = {
   title: "Eagle Eye - Security Operations & Patrol System",
   description: "Mobile-first security patrol management, gate access control, GPS verification and incident reporting system for Aiguille Security & Dawie Boerdery.",
   manifest: "/manifest.json",
+  icons: {
+    icon: "/Eagle_Eye_Logo.jpg",
+    apple: "/Eagle_Eye_Logo.jpg",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
