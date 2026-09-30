@@ -24,6 +24,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { CameraCaptureModal } from '@/components/shared/CameraCaptureModal';
 import { QrScannerModal } from '@/components/shared/QrScannerModal';
+import { EagleEyeReport } from '@/components/guard/EagleEyeReport';
 import { 
   getActiveShiftWindow, 
   generateShiftRounds, 
@@ -746,6 +747,9 @@ export default function GuardHomePage() {
           </div>
         </div>
       )}
+
+      {/* 7. Eagle Eye Report & Hourly Patrol Compliance Matrix */}
+      <EagleEyeReport guardName={guardName} siteName={siteName} />
 
       {/* Modals */}
       <CameraCaptureModal
