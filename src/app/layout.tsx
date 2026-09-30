@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { PwaRegistrar } from "@/components/shared/PwaRegistrar";
+import { AuthProvider } from "@/context/AuthContext";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -45,7 +46,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-slate-950">
         <PwaRegistrar />
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

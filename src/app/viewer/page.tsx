@@ -1,30 +1,132 @@
 'use client';
 
-import React, { useState } from 'react';
-import Link from 'next/link';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   ShieldCheck, 
   Printer, 
-  Building,
-  CheckCircle2
+  RefreshCw, 
+  LogOut 
 } from 'lucide-react';
-import { Card, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { I18nProvider } from '@/lib/i18n/context';
+import { useAuth } from '@/context/AuthContext';
+import { createClient } from '@/lib/supabase/client';
+
+interface ViewerScan {
+  id: string;
+  scan_timestamp_device: string;
+  method?: string;
+  checkpoints?: { name?: string };
+  profiles?: { first_name?: string; last_name?: string };
+}
+
+interface ViewerIncident {
+  id: string;
+  incident_type: string;
+  severity: string;
+  description: string;
+  status: string;
+  reported_at: string;
+  supervisor_notes?: string;
+}
+
+interface ViewerVehicle {
+  id: string;
+  license_plate: string;
+  direction: 'in' | 'out';
+  make_model?: string;
+  driver_name?: string;
+  entry_time: string;
+}
 
 export default function ClientViewerPortal() {
-  const [selectedSite] = useState('Dawie Boerdery - Main Farm');
+  const { profile, assignedSite, signOut } = useAuth();
+  const supabase = useMemo(() => createClient(), []);
+
   const [activeTab, setActiveTab] = useState<'summary' | 'patrols' | 'incidents' | 'vehicles'>('summary');
 
-  const clientName = 'Dawie Snyman (Client Owner)';
-  const orgName = 'Aiguille Security Services';
+  // Live Read-Only Operational Metrics
+  const [guardsCount, setGuardsCount] = useState(0);
+  const [completedScansCount, setCompletedScansCount] = useState(0);
+  const [totalCheckpoints, setTotalCheckpoints] = useState(6);
+  const [complianceRate, setComplianceRate] = useState('100%');
+  const [recentScans, setRecentScans] = useState<ViewerScan[]>([]);
+  const [incidents, setIncidents] = useState<ViewerIncident[]>([]);
+  const [vehicles, setVehicles] = useState<ViewerVehicle[]>([]);
 
-  // Read-only operational metrics
-  const completedRounds = 11;
-  const targetRounds = 12;
-  const complianceRate = '91.6%';
+  const siteId = assignedSite?.id || '22222222-2222-2222-2222-222222222222';
+  const siteName = assignedSite?.name || 'Dawie Boerdery - Main Site';
+  const clientName = profile ? `${profile.first_name} ${profile.last_name}` : 'Dawie Snyman (Client Owner)';
+
+  const loadViewerData = useCallback(async () => {
+    try {
+      // 1. Active guards count
+      const { count: activeGuardCount } = await supabase
+        .from('shifts')
+        .select('*', { count: 'exact', head: true })
+        .eq('site_id', siteId)
+        .eq('status', 'active');
+      setGuardsCount(activeGuardCount || 0);
+
+      // 2. Checkpoints
+      const { data: cps } = await supabase
+        .from('checkpoints')
+        .select('id, name')
+        .eq('site_id', siteId);
+      const totalCp = cps?.length || 6;
+      setTotalCheckpoints(totalCp);
+
+      // 3. Today's scans
+      const today = new Date().toISOString().split('T')[0];
+      const { data: scans } = await supabase
+        .from('patrol_scans')
+        .select('id, scan_timestamp_device, method, checkpoints(name), profiles(first_name, last_name)')
+        .gte('scan_timestamp_device', `${today}T00:00:00Z`)
+        .order('scan_timestamp_device', { ascending: false })
+        .limit(20);
+
+      if (scans) {
+        setRecentScans(scans as unknown as ViewerScan[]);
+        setCompletedScansCount(scans.length);
+        const rate = Math.min(100, Math.round((scans.length / totalCp) * 100));
+        setComplianceRate(`${rate}%`);
+      }
+
+      // 4. Incidents (non-panic)
+      const { data: incs } = await supabase
+        .from('incidents')
+        .select('id, incident_type, severity, description, status, reported_at, supervisor_notes')
+        .eq('site_id', siteId)
+        .order('reported_at', { ascending: false })
+        .limit(10);
+      setIncidents((incs || []) as unknown as ViewerIncident[]);
+
+      // 5. Vehicles on site
+      const { data: gate } = await supabase
+        .from('gate_entries')
+        .select('*')
+        .eq('site_id', siteId)
+        .order('entry_time', { ascending: false })
+        .limit(10);
+      setVehicles((gate || []) as unknown as ViewerVehicle[]);
+    } catch (err) {
+      console.warn('Viewer data load error:', err);
+    }
+  }, [supabase, siteId]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const timer = setTimeout(() => {
+      if (isMounted) void loadViewerData();
+    }, 0);
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [loadViewerData]);
 
   const handlePrintReport = () => {
     window.print();
@@ -46,12 +148,22 @@ export default function ClientViewerPortal() {
                   <Badge variant="info">Read Only</Badge>
                 </h1>
                 <p className="text-xs text-slate-400">
-                  {clientName} · {selectedSite}
+                  {clientName} · {siteName}
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
+              <Button
+                onClick={() => void loadViewerData()}
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-xs text-slate-400 hover:text-white"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Refresh</span>
+              </Button>
+
               <Button
                 onClick={handlePrintReport}
                 variant="secondary"
@@ -62,11 +174,14 @@ export default function ClientViewerPortal() {
                 <span className="hidden sm:inline">Print Site Report</span>
               </Button>
 
-              <Link href="/login">
-                <Button variant="ghost" size="sm" className="text-xs text-slate-400">
-                  Exit
-                </Button>
-              </Link>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void signOut()}
+                className="text-xs text-rose-400 hover:text-rose-300"
+              >
+                <LogOut className="w-4 h-4" />
+              </Button>
             </div>
           </div>
         </header>
@@ -78,208 +193,206 @@ export default function ClientViewerPortal() {
             <MetricCard
               label="Patrol Compliance"
               value={complianceRate}
-              subValue="Target: 80%+"
+              subValue="Real checkpoint audits"
               variant="success"
             />
             <MetricCard
-              label="Completed Rounds"
-              value={`${completedRounds} / ${targetRounds}`}
-              subValue="1 Remaining"
+              label="Today's Scans"
+              value={completedScansCount.toString()}
+              subValue={`Across ${totalCheckpoints} checkpoints`}
               variant="info"
             />
             <MetricCard
               label="Guards On Duty"
-              value="2"
-              subValue="Full Attendance"
+              value={guardsCount.toString()}
+              subValue="Live active attendance"
               variant="default"
             />
             <MetricCard
               label="Open Incidents"
-              value="0"
-              subValue="All Resolved"
+              value={incidents.filter((i) => i.status === 'reported').length.toString()}
+              subValue="Security event tracking"
               variant="success"
             />
           </div>
 
-          {/* Site Overview Banner */}
-          <div className="p-4.5 rounded-3xl bg-slate-900 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-blue-950 border border-blue-800/60 flex items-center justify-center text-blue-400">
-                <Building className="w-6 h-6" />
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-white">{selectedSite}</h2>
-                <p className="text-xs text-slate-400">
-                  Contractor: <span className="text-slate-200 font-semibold">{orgName}</span> · Active Shift: Night Shift
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Badge variant="success">Perimeter Secured</Badge>
-              <Badge variant="neutral">GPS Verified</Badge>
-            </div>
-          </div>
-
           {/* Navigation Tabs */}
-          <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-            {[
-              { id: 'summary', label: 'Operations Summary' },
-              { id: 'patrols', label: 'Patrol Rounds History' },
-              { id: 'incidents', label: 'Incident Records' },
-              { id: 'vehicles', label: 'Vehicle Entry Logs' }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as typeof activeTab)}
-                className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all ${
-                  activeTab === tab.id
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className="flex overflow-x-auto gap-2 border-b border-slate-800 pb-2 text-xs font-bold scrollbar-none">
+            <button
+              onClick={() => setActiveTab('summary')}
+              className={`px-4 py-2 rounded-xl transition-all ${
+                activeTab === 'summary'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Overview Summary
+            </button>
+            <button
+              onClick={() => setActiveTab('patrols')}
+              className={`px-4 py-2 rounded-xl transition-all ${
+                activeTab === 'patrols'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Patrol Verification ({recentScans.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('incidents')}
+              className={`px-4 py-2 rounded-xl transition-all ${
+                activeTab === 'incidents'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Incidents ({incidents.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('vehicles')}
+              className={`px-4 py-2 rounded-xl transition-all ${
+                activeTab === 'vehicles'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Vehicle Access ({vehicles.length})
+            </button>
           </div>
 
-          {/* TAB 1: Summary */}
+          {/* Tab Content */}
           {activeTab === 'summary' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
-                <CardHeader>
-                  <CardTitle className="text-sm">Tonight&apos;s Guard Attendance</CardTitle>
-                </CardHeader>
-                <div className="space-y-3">
-                  <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <span className="text-sm font-bold text-white block">Sipho Khoza</span>
-                      <span className="text-xs text-slate-400">Guard Station A · On duty since 18:00</span>
-                    </div>
-                    <Badge variant="success">Active</Badge>
+              <Card className="p-5 bg-slate-900/90 border-slate-800 rounded-3xl space-y-3">
+                <h2 className="text-sm font-black text-white uppercase tracking-wider">
+                  Site Operations Status
+                </h2>
+                <div className="space-y-2 text-xs text-slate-300">
+                  <div className="flex justify-between py-1.5 border-b border-slate-800/80">
+                    <span className="text-slate-400">Security Provider</span>
+                    <span className="font-semibold text-white">Aiguille Security Services</span>
                   </div>
-
-                  <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <span className="text-sm font-bold text-white block">Petrus Ndlovu</span>
-                      <span className="text-xs text-slate-400">Main Gate Post · On duty since 18:00</span>
-                    </div>
-                    <Badge variant="success">Active</Badge>
+                  <div className="flex justify-between py-1.5 border-b border-slate-800/80">
+                    <span className="text-slate-400">Site Location</span>
+                    <span className="font-semibold text-white">{siteName}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5 border-b border-slate-800/80">
+                    <span className="text-slate-400">Guards Active</span>
+                    <span className="font-semibold text-emerald-400">{guardsCount} on duty</span>
+                  </div>
+                  <div className="flex justify-between py-1.5">
+                    <span className="text-slate-400">Data Guarantee</span>
+                    <span className="font-mono text-blue-400">Read-Only Live Audit</span>
                   </div>
                 </div>
               </Card>
 
-              <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
-                <CardHeader>
-                  <CardTitle className="text-sm">Perimeter Checkpoint Verification</CardTitle>
-                </CardHeader>
-                <div className="space-y-2">
-                  {[
-                    { name: 'Hoofhek / Main Gate', scans: '11 times verified', status: 'verified' as const },
-                    { name: 'Skaapkraal / East Kraal', scans: '11 times verified', status: 'verified' as const },
-                    { name: 'Hoenderhok / Poultry Sheds', scans: '10 times verified', status: 'verified' as const },
-                    { name: 'Stoor & Werkswinkel', scans: '11 times verified', status: 'verified' as const }
-                  ].map((cp, idx) => (
-                    <div key={idx} className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80 flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                        <span className="font-semibold text-slate-200">{cp.name}</span>
+              <Card className="p-5 bg-slate-900/90 border-slate-800 rounded-3xl space-y-3">
+                <h2 className="text-sm font-black text-white uppercase tracking-wider">
+                  Recent Patrol Activity
+                </h2>
+                {recentScans.length === 0 ? (
+                  <p className="text-xs text-slate-400">No patrol scans recorded today yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {recentScans.slice(0, 4).map((s) => (
+                      <div key={s.id} className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex justify-between items-center text-xs">
+                        <span className="font-bold text-white">{s.checkpoints?.name || 'Checkpoint'}</span>
+                        <span className="font-mono text-slate-400 text-[11px]">
+                          {new Date(s.scan_timestamp_device).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })} ({s.method?.toUpperCase()})
+                        </span>
                       </div>
-                      <span className="text-slate-400 font-mono text-[11px]">{cp.scans}</span>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </Card>
             </div>
           )}
 
-          {/* TAB 2: Patrol Rounds */}
           {activeTab === 'patrols' && (
-            <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
-              <CardHeader>
-                <CardTitle className="text-sm">Verified Patrol Rounds (18:00 – 06:00)</CardTitle>
-                <Badge variant="success">11 / 12 Verified</Badge>
-              </CardHeader>
-              <div className="space-y-2.5 max-h-96 overflow-y-auto">
-                {[
-                  { round: 1, time: '18:00 – 19:00', points: '4 of 4 points', status: 'Compliant' },
-                  { round: 2, time: '19:00 – 20:00', points: '4 of 4 points', status: 'Compliant' },
-                  { round: 3, time: '20:00 – 21:00', points: '4 of 4 points', status: 'Compliant' },
-                  { round: 4, time: '21:00 – 22:00', points: '4 of 4 points', status: 'Compliant' },
-                  { round: 5, time: '22:00 – 23:00', points: '4 of 4 points', status: 'Compliant' },
-                  { round: 6, time: '23:00 – 00:00', points: '4 of 4 points', status: 'Compliant' },
-                  { round: 7, time: '00:00 – 01:00', points: '4 of 4 points', status: 'Compliant' },
-                  { round: 8, time: '01:00 – 02:00', points: '4 of 4 points', status: 'Compliant' },
-                  { round: 9, time: '02:00 – 03:00', points: '4 of 4 points', status: 'Compliant' },
-                  { round: 10, time: '03:00 – 04:00', points: '4 of 4 points', status: 'Compliant' },
-                  { round: 11, time: '04:00 – 05:00', points: '4 of 4 points', status: 'Compliant' },
-                  { round: 12, time: '05:00 – 06:00', points: 'In progress', status: 'Current' }
-                ].map((r) => (
-                  <div key={r.round} className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-bold text-white block">Patrol Round {r.round} ({r.time})</span>
-                      <span className="text-slate-400">{r.points}</span>
-                    </div>
-                    <Badge variant={r.status === 'Compliant' ? 'success' : 'info'}>
-                      {r.status}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {/* TAB 3: Incidents */}
-          {activeTab === 'incidents' && (
-            <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
-              <CardHeader>
-                <CardTitle className="text-sm">Historical Incident Log</CardTitle>
-              </CardHeader>
-              <div className="space-y-3">
-                <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="warning">Fence Wire Cut</Badge>
-                        <span className="text-xs text-slate-400">Ref: INC-2026-881294</span>
+            <div className="space-y-3">
+              <h2 className="text-sm font-black text-slate-300 uppercase tracking-wider">
+                Patrol Verification Log (Today)
+              </h2>
+              {recentScans.length === 0 ? (
+                <Card className="p-6 text-center text-slate-400 text-xs">No scans today.</Card>
+              ) : (
+                <div className="space-y-2">
+                  {recentScans.map((s) => (
+                    <Card key={s.id} className="p-3 bg-slate-900 border-slate-800 rounded-2xl flex justify-between items-center text-xs">
+                      <div>
+                        <span className="font-bold text-white block">{s.checkpoints?.name || 'Checkpoint'}</span>
+                        <span className="text-[11px] text-slate-400">
+                          Guard: {s.profiles ? `${s.profiles.first_name} ${s.profiles.last_name}` : 'Security Officer'}
+                        </span>
                       </div>
-                      <p className="text-sm text-slate-200 mt-2 font-medium">
-                        Perimeter fence wire cut along south river boundary. Guard reported immediately; fence repaired by morning maintenance team.
-                      </p>
-                      <p className="text-[11px] font-mono text-slate-400 mt-1">Logged: 2026-09-29 23:14</p>
-                    </div>
-                    <Badge variant="success">Resolved</Badge>
-                  </div>
+                      <div className="text-right">
+                        <Badge variant="neutral">{s.method?.toUpperCase()}</Badge>
+                        <span className="font-mono text-slate-400 text-[11px] block mt-1">
+                          {new Date(s.scan_timestamp_device).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    </Card>
+                  ))}
                 </div>
-              </div>
-            </Card>
+              )}
+            </div>
           )}
 
-          {/* TAB 4: Vehicles */}
+          {activeTab === 'incidents' && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-black text-slate-300 uppercase tracking-wider">
+                Site Incidents ({incidents.length})
+              </h2>
+              {incidents.length === 0 ? (
+                <Card className="p-6 text-center text-slate-400 text-xs">No incidents reported.</Card>
+              ) : (
+                <div className="space-y-2">
+                  {incidents.map((i) => (
+                    <Card key={i.id} className="p-4 bg-slate-900 border-slate-800 rounded-2xl space-y-1 text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-white text-sm">{i.incident_type}</span>
+                        <Badge variant={i.status === 'resolved' ? 'success' : 'warning'}>{i.status}</Badge>
+                      </div>
+                      <p className="text-slate-300">{i.description}</p>
+                      {i.supervisor_notes && (
+                        <p className="text-emerald-400 text-[11px] pt-1">
+                          Resolution: {i.supervisor_notes}
+                        </p>
+                      )}
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {activeTab === 'vehicles' && (
-            <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-4">
-              <CardHeader>
-                <CardTitle className="text-sm">Site Vehicle Traffic Register</CardTitle>
-              </CardHeader>
-              <div className="space-y-2.5">
-                {[
-                  { plate: 'CA 552-194', vehicle: 'Toyota Hilux (White)', driver: 'J. van der Merwe', dir: 'IN', time: '18:15', purpose: 'Feed Delivery' },
-                  { plate: 'NW 910-882', vehicle: 'Isuzu D-Max (Silver)', driver: 'S. Botha', dir: 'OUT', time: '19:20', purpose: 'Veterinary Inspection', dwell: '1h 05m' }
-                ].map((v, i) => (
-                  <div key={i} className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-mono font-bold text-white text-sm block">{v.plate}</span>
-                      <span className="text-slate-400">{v.vehicle} · {v.driver}</span>
-                      <span className="text-[11px] text-slate-500 block mt-0.5">{v.purpose}</span>
-                    </div>
-                    <div className="text-right">
-                      <Badge variant={v.dir === 'IN' ? 'info' : 'success'}>{v.dir}</Badge>
-                      <span className="text-[11px] font-mono text-slate-400 block mt-1">{v.time}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
+            <div className="space-y-3">
+              <h2 className="text-sm font-black text-slate-300 uppercase tracking-wider">
+                Gate Entry & Exit Logs ({vehicles.length})
+              </h2>
+              {vehicles.length === 0 ? (
+                <Card className="p-6 text-center text-slate-400 text-xs">No gate records available.</Card>
+              ) : (
+                <div className="space-y-2">
+                  {vehicles.map((v) => (
+                    <Card key={v.id} className="p-3 bg-slate-900 border-slate-800 rounded-2xl flex justify-between items-center text-xs">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-white">{v.license_plate}</span>
+                          <Badge variant={v.direction === 'in' ? 'success' : 'neutral'}>{v.direction?.toUpperCase()}</Badge>
+                        </div>
+                        <p className="text-slate-400 mt-0.5">{v.make_model || 'Vehicle'} {v.driver_name ? `· Driver: ${v.driver_name}` : ''}</p>
+                      </div>
+                      <span className="font-mono text-slate-400 text-[11px]">
+                        {new Date(v.entry_time).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </main>
       </div>

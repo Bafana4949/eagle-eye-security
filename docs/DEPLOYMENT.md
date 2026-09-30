@@ -64,12 +64,12 @@ Create a `.env.local` file (or add to your Vercel Dashboard under **Project Sett
 # CLIENT SAFE — Public credentials bundled to client browser
 # =================================================================
 NEXT_PUBLIC_SUPABASE_URL=https://zuqcmqrfdousdcjybycr.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp1cWNtcXJmZG91c2RjanlieWNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3NTQ5ODgsImV4cCI6MjEwNjMzMDk4OH0.O_kAVfI1ume-5eBE4qYzGZ2XSTN43Z1XcLcIQgU6N-4
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key-from-Supabase-API-settings>
 
 # =================================================================
 # SERVER ONLY — Highly sensitive secrets (NEVER expose to browser)
 # =================================================================
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp1cWNtcXJmZG91c2RjanlieWNyIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MDc1NDk4OCwiZXhwIjoyMTA2MzMwOTg4fQ.Qm9Oo6Dq3rBwE30yv_weuj8ysC9aMjIHnow6DrQ82VQ
+SUPABASE_SERVICE_ROLE_KEY=<NEVER-COMMIT-set-only-in-Vercel-server-env>
 
 # =================================================================
 # OPTIONAL — Custom Domain & Analytics

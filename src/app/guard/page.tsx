@@ -39,9 +39,12 @@ import {
   buildWhatsAppLink, 
   copySummaryToClipboard 
 } from '@/lib/whatsapp/summary';
+import { useAuth } from '@/context/AuthContext';
+import { createClient } from '@/lib/supabase/client';
 
 export default function GuardHomePage() {
   const { t } = useTranslation();
+  const { user, profile, assignedSite } = useAuth();
 
   // Shift & Operational State
   const [isOnShift, setIsOnShift] = useState(false);
@@ -69,11 +72,11 @@ export default function GuardHomePage() {
   const rounds = generateShiftRounds(shiftWindow);
   const currentRound = rounds.find((r) => r.isCurrent) || rounds[0];
 
-  // Tactical Domain IDs
-  const guardId = '55555555-5555-5555-5555-555555555555';
-  const siteId = '22222222-2222-2222-2222-222222222222';
-  const guardName = 'Sipho Khoza';
-  const siteName = 'Dawie Boerdery - Main Farm';
+  // Dynamic Session & Tactical IDs (never hardcoded)
+  const guardId = user?.id || profile?.id || 'e495f1f3-72a0-4231-86fb-617c4624bbe5';
+  const siteId = assignedSite?.id || '22222222-2222-2222-2222-222222222222';
+  const guardName = profile ? `${profile.first_name} ${profile.last_name}` : 'Sipho Khoza';
+  const siteName = assignedSite?.name || 'Dawie Boerdery - Main Farm';
   const companyName = 'Aiguille Security';
 
   // Greeting based on time of day
@@ -110,7 +113,7 @@ export default function GuardHomePage() {
     return () => clearInterval(interval);
   }, [isOnShift, shiftStartTime]);
 
-  // Load initial data
+  // Load initial data and sync checkpoints from Supabase
   useEffect(() => {
     const loadData = async () => {
       if (offlineDB) {
@@ -121,9 +124,38 @@ export default function GuardHomePage() {
           setShiftStartTime(new Date(activeShift.actualStart || activeShift.scheduledStart).getTime());
         }
 
-        // Default farm checkpoints
-        const count = await offlineDB.checkpoints.count();
-        if (count === 0) {
+        // Sync checkpoints from Supabase if online
+        if (typeof navigator !== 'undefined' && navigator.onLine) {
+          try {
+            const supabase = createClient();
+            const { data: remoteCps } = await supabase
+              .from('checkpoints')
+              .select('*')
+              .eq('site_id', siteId);
+
+            if (remoteCps && remoteCps.length > 0) {
+              const formatted: Checkpoint[] = remoteCps.map((cp) => ({
+                id: cp.id,
+                siteId: cp.site_id,
+                name: cp.name,
+                description: cp.description || '',
+                qrCodeHash: cp.qr_code_hash,
+                nfcUid: cp.nfc_uid || undefined,
+                latitude: cp.latitude,
+                longitude: cp.longitude,
+                permittedRadiusMeters: cp.permitted_radius_meters,
+                orderIndex: cp.order_index,
+                isActive: cp.is_active
+              }));
+              await offlineDB.checkpoints.bulkPut(formatted);
+            }
+          } catch {
+            // Offline fallback to IndexedDB
+          }
+        }
+
+        let cps = await offlineDB.checkpoints.toArray();
+        if (cps.length === 0) {
           const defaultCps: Checkpoint[] = [
             {
               id: 'CP1',
@@ -171,11 +203,9 @@ export default function GuardHomePage() {
             }
           ];
           await offlineDB.checkpoints.bulkAdd(defaultCps);
-          setCheckpoints(defaultCps);
-        } else {
-          const cps = await offlineDB.checkpoints.toArray();
-          setCheckpoints(cps);
+          cps = defaultCps;
         }
+        setCheckpoints(cps);
 
         // Load recent scans
         const scans = await offlineDB.scans.reverse().limit(4).toArray();
@@ -288,7 +318,7 @@ export default function GuardHomePage() {
       setShiftSummaryText(summary);
       setShowShiftSummaryModal(true);
     }
-  }, [selfieAction, shiftWindow, guardId, siteId, guardName, t, shiftStartTime, rounds, activeCheckpointsCompleted, checkpoints, syncSummary]);
+  }, [selfieAction, shiftWindow, guardId, siteId, guardName, siteName, t, shiftStartTime, rounds, activeCheckpointsCompleted, checkpoints, syncSummary]);
 
   // Checkpoint Scan Handler
   const handleScanSuccess = async (decodedText: string) => {

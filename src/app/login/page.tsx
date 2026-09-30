@@ -3,72 +3,101 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ShieldCheck, Lock, User, ArrowRight, Eye } from 'lucide-react';
+import { ShieldCheck, Lock, User, ArrowRight, Eye, AlertCircle } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { I18nProvider } from '@/lib/i18n/context';
+import { createClient } from '@/lib/supabase/client';
 
 export default function LoginPage() {
   const router = useRouter();
   const [authMode, setAuthMode] = useState<'guard' | 'manager' | 'viewer'>('guard');
-  const [selectedGuard, setSelectedGuard] = useState('55555555-5555-5555-5555-555555555555');
-  const [pin, setPin] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState('guard@aiguillesecurity.co.za');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const guardList = [
-    { id: '55555555-5555-5555-5555-555555555555', name: 'Wag 1 / Sipho Khoza', code: '1234' },
-    { id: '66666666-6666-6666-6666-666666666666', name: 'Wag 2 / Petrus Ndlovu', code: '4321' }
-  ];
+  const supabase = createClient();
 
-  const handleGuardSignIn = (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setErrorMsg(null);
-
-    const guard = guardList.find((g) => g.id === selectedGuard);
-    if (!guard || pin !== guard.code) {
-      setIsLoading(false);
-      setErrorMsg('Invalid Guard PIN. Please try again.');
-      return;
-    }
-
-    setTimeout(() => {
-      setIsLoading(false);
-      router.push('/guard');
-    }, 400);
-  };
-
-  const handleManagerSignIn = (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent, targetRole: 'guard' | 'manager' | 'viewer') => {
     e.preventDefault();
     setIsLoading(true);
     setErrorMsg(null);
 
     if (!email || !password) {
       setIsLoading(false);
-      setErrorMsg('Please enter email and password');
+      setErrorMsg('Please enter both email and password.');
       return;
     }
 
-    setTimeout(() => {
-      setIsLoading(false);
-      if (email.includes('admin') || email.includes('dawie')) {
-        router.push('/admin');
-      } else {
-        router.push('/supervisor');
+    try {
+      // 1. Real Supabase Authentication
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password
+      });
+
+      if (authError || !authData.user) {
+        setIsLoading(false);
+        setErrorMsg(authError?.message || 'Authentication failed. Please check your credentials.');
+        return;
       }
-    }, 500);
+
+      // 2. Query user_roles from Supabase database
+      const { data: rolesData, error: rolesError } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', authData.user.id);
+
+      if (rolesError) {
+        setIsLoading(false);
+        setErrorMsg('Failed to verify user authorization. Please contact your administrator.');
+        return;
+      }
+
+      const roles = (rolesData || []).map((r) => r.role);
+
+      // 3. Strict Role-Based Redirection
+      if (targetRole === 'guard') {
+        if (!roles.includes('guard') && !roles.includes('admin') && !roles.includes('super_admin')) {
+          setIsLoading(false);
+          setErrorMsg('Access denied: Your account does not have Guard permissions.');
+          return;
+        }
+        router.push('/guard');
+      } else if (targetRole === 'manager') {
+        if (roles.includes('admin') || roles.includes('super_admin')) {
+          router.push('/admin');
+        } else if (roles.includes('supervisor')) {
+          router.push('/supervisor');
+        } else {
+          setIsLoading(false);
+          setErrorMsg('Access denied: Your account does not have Supervisor or Admin permissions.');
+        }
+      } else if (targetRole === 'viewer') {
+        if (!roles.includes('client_viewer') && !roles.includes('admin') && !roles.includes('super_admin')) {
+          setIsLoading(false);
+          setErrorMsg('Access denied: Your account does not have Client Viewer permissions.');
+          return;
+        }
+        router.push('/viewer');
+      }
+    } catch (err: unknown) {
+      setIsLoading(false);
+      setErrorMsg(err instanceof Error ? err.message : 'An unexpected network error occurred.');
+    }
   };
 
-  const handleViewerSignIn = (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      router.push('/viewer');
-    }, 300);
+  const handleSelectPreset = (mode: 'guard' | 'manager' | 'viewer') => {
+    setAuthMode(mode);
+    setErrorMsg(null);
+    if (mode === 'guard') {
+      setEmail('guard@aiguillesecurity.co.za');
+    } else if (mode === 'manager') {
+      setEmail('supervisor@aiguillesecurity.co.za');
+    } else if (mode === 'viewer') {
+      setEmail('viewer@dawieboerdery.co.za');
+    }
   };
 
   return (
@@ -91,10 +120,7 @@ export default function LoginPage() {
           {/* Mode Selector */}
           <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-2xl bg-slate-900 border border-slate-800">
             <button
-              onClick={() => {
-                setAuthMode('guard');
-                setErrorMsg(null);
-              }}
+              onClick={() => handleSelectPreset('guard')}
               className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                 authMode === 'guard'
                   ? 'bg-blue-600 text-white shadow-md'
@@ -106,10 +132,7 @@ export default function LoginPage() {
             </button>
 
             <button
-              onClick={() => {
-                setAuthMode('manager');
-                setErrorMsg(null);
-              }}
+              onClick={() => handleSelectPreset('manager')}
               className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                 authMode === 'manager'
                   ? 'bg-blue-600 text-white shadow-md'
@@ -121,10 +144,7 @@ export default function LoginPage() {
             </button>
 
             <button
-              onClick={() => {
-                setAuthMode('viewer');
-                setErrorMsg(null);
-              }}
+              onClick={() => handleSelectPreset('viewer')}
               className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                 authMode === 'viewer'
                   ? 'bg-blue-600 text-white shadow-md'
@@ -139,126 +159,82 @@ export default function LoginPage() {
           {/* Login Card */}
           <Card className="p-6 border-slate-800 rounded-3xl bg-slate-900/90 shadow-2xl">
             {errorMsg && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs font-semibold text-center">
-                {errorMsg}
+              <div className="mb-4 p-3.5 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs font-semibold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{errorMsg}</span>
               </div>
             )}
 
-            {authMode === 'guard' && (
-              <form onSubmit={handleGuardSignIn} className="space-y-4">
-                <div>
-                  <label className="text-xs font-semibold text-slate-400 block mb-1">
-                    Select Guard Profile
-                  </label>
-                  <select
-                    value={selectedGuard}
-                    onChange={(e) => setSelectedGuard(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    {guardList.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.name}
-                      </option>
-                    ))}
-                  </select>
+            <form onSubmit={(e) => handleSignIn(e, authMode)} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-400 block mb-1">
+                  Email Address / Identifier
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@aiguillesecurity.co.za"
+                  required
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-400 block mb-1">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••••••"
+                  required
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-base text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {authMode === 'guard' && (
+                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 space-y-1">
+                  <div className="flex justify-between items-center text-slate-300 font-semibold">
+                    <span>Guard Station:</span>
+                    <span className="text-blue-400 font-mono">Dawie Boerdery (Hoofplaas)</span>
+                  </div>
+                  <p>Guards authenticate with assigned security credentials to start patrols and gate duty.</p>
                 </div>
+              )}
 
-                <div>
-                  <label className="text-xs font-semibold text-slate-400 block mb-1">
-                    Enter Security PIN
-                  </label>
-                  <input
-                    type="password"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={pin}
-                    onChange={(e) => setPin(e.target.value)}
-                    placeholder="Enter 4-digit PIN (demo: 1234)"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-lg font-mono text-center tracking-widest text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <p className="text-[11px] text-slate-500 mt-1 text-center">
-                    Demo PIN for Sipho: <span className="font-mono text-blue-400">1234</span>
-                  </p>
+              {authMode === 'manager' && (
+                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 space-y-1">
+                  <div className="flex justify-between items-center text-slate-300 font-semibold">
+                    <span>Command Center:</span>
+                    <span className="text-blue-400">Supervisor & Admin Access</span>
+                  </div>
+                  <p>Admins route to Admin Portal; Supervisors route to Live Operations Dashboard.</p>
                 </div>
+              )}
 
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="touch"
-                  isLoading={isLoading}
-                  className="w-full mt-2 font-bold"
-                >
-                  <span>Authenticate & Enter App</span>
-                  <ArrowRight className="w-5 h-5 ml-2" />
-                </Button>
-              </form>
-            )}
-
-            {authMode === 'manager' && (
-              <form onSubmit={handleManagerSignIn} className="space-y-4">
-                <div>
-                  <label className="text-xs font-semibold text-slate-400 block mb-1">
-                    Email Address
-                  </label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="supervisor@aiguillesecurity.co.za"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+              {authMode === 'viewer' && (
+                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 space-y-1">
+                  <div className="flex justify-between items-center text-slate-300 font-semibold">
+                    <span>Client Portal:</span>
+                    <span className="text-indigo-400">Dawie Snyman (Client Owner)</span>
+                  </div>
+                  <p>Read-only live compliance reports, patrol timeline, and gate log monitoring.</p>
                 </div>
+              )}
 
-                <div>
-                  <label className="text-xs font-semibold text-slate-400 block mb-1">
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Demo: Enter &apos;admin&apos; in email for Admin portal, or any other for Supervisor.
-                  </p>
-                </div>
-
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="touch"
-                  isLoading={isLoading}
-                  className="w-full mt-2 font-bold"
-                >
-                  <span>Sign In to Dashboard</span>
-                  <ArrowRight className="w-5 h-5 ml-2" />
-                </Button>
-              </form>
-            )}
-
-            {authMode === 'viewer' && (
-              <form onSubmit={handleViewerSignIn} className="space-y-4">
-                <div className="text-center py-2 space-y-1">
-                  <span className="text-xs font-bold text-slate-200 block">Dawie Boerdery Client Portal</span>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    View real-time patrol compliance, site reports, and incident history in read-only mode.
-                  </p>
-                </div>
-
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="touch"
-                  isLoading={isLoading}
-                  className="w-full mt-2 font-bold bg-indigo-600 hover:bg-indigo-500"
-                >
-                  <span>Access Client Portal</span>
-                  <ArrowRight className="w-5 h-5 ml-2" />
-                </Button>
-              </form>
-            )}
+              <Button
+                type="submit"
+                variant="primary"
+                size="touch"
+                isLoading={isLoading}
+                className="w-full mt-2 font-bold"
+              >
+                <span>Authenticate & Enter App</span>
+                <ArrowRight className="w-5 h-5 ml-2" />
+              </Button>
+            </form>
           </Card>
 
           <div className="text-center">

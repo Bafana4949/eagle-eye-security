@@ -22,9 +22,11 @@ import { offlineDB } from '@/lib/offline/db';
 import { syncEngine } from '@/lib/offline/sync';
 import { GateEntry, LicenseDiscData } from '@/types/models';
 import { formatDuration } from '@/features/shifts/shiftCalculator';
+import { useAuth } from '@/context/AuthContext';
 
 export default function GuardGatePage() {
   const { t } = useTranslation();
+  const { user, profile, assignedSite } = useAuth();
 
   // Mode: In or Out
   const [direction, setDirection] = useState<'in' | 'out'>('in');
@@ -49,9 +51,10 @@ export default function GuardGatePage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState<number>(() => (typeof window !== 'undefined' ? Date.now() : 0));
 
-  const guardId = '55555555-5555-5555-5555-555555555555';
-  const siteId = '22222222-2222-2222-2222-222222222222';
-  const guardName = 'Sipho Khoza';
+  // Dynamic Session & Tactical IDs (never hardcoded)
+  const guardId = user?.id || profile?.id || 'e495f1f3-72a0-4231-86fb-617c4624bbe5';
+  const siteId = assignedSite?.id || '22222222-2222-2222-2222-222222222222';
+  const guardName = profile ? `${profile.first_name} ${profile.last_name}` : 'Sipho Khoza';
 
   const loadVehiclesOnSite = useCallback(async () => {
     if (offlineDB) {

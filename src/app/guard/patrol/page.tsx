@@ -19,6 +19,7 @@ import { syncEngine } from '@/lib/offline/sync';
 import { validateProximity, formatDistance } from '@/lib/gps/haversine';
 import { Checkpoint, PatrolScan } from '@/types/models';
 import { formatTimeHM } from '@/features/shifts/shiftCalculator';
+import { useAuth } from '@/context/AuthContext';
 
 interface ScanVerificationState {
   checkpointName: string;
@@ -40,6 +41,7 @@ interface WebNdefReader {
 
 export default function GuardPatrolPage() {
   const { t } = useTranslation();
+  const { user, profile, assignedSite } = useAuth();
 
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [completedScanIds, setCompletedScanIds] = useState<Record<string, PatrolScan>>({});
@@ -49,9 +51,10 @@ export default function GuardPatrolPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [verificationResult, setVerificationResult] = useState<ScanVerificationState | null>(null);
 
-  const guardId = '55555555-5555-5555-5555-555555555555';
-  const siteId = '22222222-2222-2222-2222-222222222222';
-  const guardName = 'Sipho Khoza';
+  // Dynamic Session & Tactical IDs (never hardcoded)
+  const guardId = user?.id || profile?.id || 'e495f1f3-72a0-4231-86fb-617c4624bbe5';
+  const siteId = assignedSite?.id || '22222222-2222-2222-2222-222222222222';
+  const guardName = profile ? `${profile.first_name} ${profile.last_name}` : 'Sipho Khoza';
 
   // Watch geolocation
   useEffect(() => {
@@ -102,11 +105,36 @@ export default function GuardPatrolPage() {
 
   const handleScanProcess = useCallback(async (identifier: string, method: 'qr' | 'nfc') => {
     const cleanId = identifier.trim();
+
+    // Verify Active Shift Exists
+    let activeShiftId: string | null = null;
+    if (offlineDB) {
+      const activeShift = await offlineDB.shifts
+        .where('guardId')
+        .equals(guardId)
+        .and((s) => s.status === 'active')
+        .first();
+
+      if (activeShift) {
+        activeShiftId = activeShift.id;
+      }
+    }
+
+    if (!activeShiftId) {
+      showToast('Geen aktiewe skof / No active shift. Begin asseblief skof op Wag Tuisblad voordat patrollie gedoen word.');
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate([150, 100, 150]);
+      }
+      return;
+    }
+
+    // Match checkpoint by QR token, normalized NFC serial, or legacy code
+    const normalizedId = cleanId.replace(/:/g, '').toUpperCase();
     const matchedCp = checkpoints.find(
       (c) =>
         c.qrCodeHash === cleanId ||
         cleanId.includes(c.qrCodeHash) ||
-        (c.nfcUid && c.nfcUid === cleanId) ||
+        (c.nfcUid && (c.nfcUid === cleanId || c.nfcUid.replace(/:/g, '').toUpperCase() === normalizedId)) ||
         // Support Dawie's legacy physical QR cards: PLAAS-CP:CP1, etc.
         (cleanId.startsWith('PLAAS-CP:') && (c.id === cleanId.slice(9) || c.orderIndex.toString() === cleanId.slice(10)))
     );
@@ -139,7 +167,7 @@ export default function GuardPatrolPage() {
     const scan: PatrolScan = {
       id: crypto.randomUUID(),
       offlineUuid: crypto.randomUUID(),
-      shiftId: crypto.randomUUID(),
+      shiftId: activeShiftId,
       checkpointId: matchedCp.id,
       checkpointName: matchedCp.name,
       guardId,
@@ -160,6 +188,7 @@ export default function GuardPatrolPage() {
 
     if (syncEngine) {
       await syncEngine.enqueue('checkpoint_scan', guardId, siteId, {
+        shiftId: activeShiftId,
         checkpointId: matchedCp.id,
         latitude: currentGps?.lat,
         longitude: currentGps?.lng,

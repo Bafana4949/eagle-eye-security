@@ -8,7 +8,10 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test:db": "tsx --env-file=.env.local --test \"tests/db/**/*.test.ts\"",
+    "test:e2e": "playwright test",
+    "test:all": "npm run test && npm run test:db"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -23,16 +26,20 @@
     "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
     "tailwind-merge": "^3.7.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.7",
+    "fake-indexeddb": "^6.2.5",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
     "typescript": "^5"

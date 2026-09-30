@@ -24,6 +24,8 @@ import { Badge } from '@/components/ui/badge';
 import { I18nProvider } from '@/lib/i18n/context';
 import { Checkpoint } from '@/types/models';
 import { offlineDB } from '@/lib/offline/db';
+import { useAuth } from '@/context/AuthContext';
+import { createClient } from '@/lib/supabase/client';
 
 interface WebNdefReadingEvent {
   serialNumber?: string;
@@ -36,6 +38,9 @@ interface WebNdefReaderInstance {
 }
 
 export default function AdminPortalPage() {
+  const { assignedSite } = useAuth();
+  const supabase = React.useMemo(() => createClient(), []);
+
   const [activeSection, setActiveSection] = useState<'checkpoints' | 'sites' | 'guards' | 'branding' | 'audit'>('checkpoints');
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [qrImages, setQrImages] = useState<Record<string, string>>({});
@@ -57,11 +62,13 @@ export default function AdminPortalPage() {
   const [emergencyPhone, setEmergencyPhone] = useState('+27 82 999 4321');
   const [supervisorWhatsApp, setSupervisorWhatsApp] = useState('+27 82 123 4567');
 
+  const siteId = assignedSite?.id || '22222222-2222-2222-2222-222222222222';
+
   // Guards Roster State
   const [guards, setGuards] = useState([
     { id: '1', name: 'Wag 1 / Sipho Khoza', employeeNo: 'G-101', role: 'guard', phone: '+27 82 111 2222', active: true },
     { id: '2', name: 'Wag 2 / Petrus Ndlovu', employeeNo: 'G-102', role: 'guard', phone: '+27 82 333 4444', active: true },
-    { id: '3', name: 'Dawie Snyman', employeeNo: 'M-001', role: 'admin', phone: '+27 82 999 4321', active: true }
+    { id: '3', name: 'Dawie Snyman', employeeNo: 'ADM-01', role: 'admin', phone: '+27 82 999 4321', active: true }
   ]);
   const [newGuardName, setNewGuardName] = useState('');
   const [newGuardPhone, setNewGuardPhone] = useState('');
@@ -83,22 +90,72 @@ export default function AdminPortalPage() {
     setQrImages(map);
   }, []);
 
-  useEffect(() => {
-    let isMounted = true;
-    const fetchCheckpoints = async () => {
+  const loadData = useCallback(async () => {
+    // 1. Fetch checkpoints from Supabase
+    try {
+      const { data: remoteCps } = await supabase
+        .from('checkpoints')
+        .select('*')
+        .eq('site_id', siteId)
+        .order('order_index');
+
+      if (remoteCps && remoteCps.length > 0) {
+        const formatted: Checkpoint[] = remoteCps.map((cp) => ({
+          id: cp.id,
+          siteId: cp.site_id,
+          name: cp.name,
+          description: cp.description || '',
+          qrCodeHash: cp.qr_code_hash,
+          nfcUid: cp.nfc_uid || undefined,
+          latitude: cp.latitude,
+          longitude: cp.longitude,
+          permittedRadiusMeters: cp.permitted_radius_meters,
+          orderIndex: cp.order_index,
+          isActive: cp.is_active
+        }));
+        setCheckpoints(formatted);
+        void generateQrImages(formatted);
+        if (offlineDB) {
+          await offlineDB.checkpoints.bulkPut(formatted);
+        }
+      } else if (offlineDB) {
+        const cps = await offlineDB.checkpoints.toArray();
+        setCheckpoints(cps);
+        void generateQrImages(cps);
+      }
+    } catch {
       if (offlineDB) {
         const cps = await offlineDB.checkpoints.toArray();
-        if (isMounted) {
-          setCheckpoints(cps);
-          void generateQrImages(cps);
-        }
+        setCheckpoints(cps);
+        void generateQrImages(cps);
       }
-    };
-    void fetchCheckpoints();
+    }
+
+    // 2. Fetch site settings from Supabase
+    try {
+      const { data: site } = await supabase.from('sites').select('*').eq('id', siteId).maybeSingle();
+      if (site) {
+        setSiteName(site.name);
+        setSiteCode(site.code);
+        if (site.emergency_phone) setEmergencyPhone(site.emergency_phone);
+        if (site.whatsapp_dispatch_number) setSupervisorWhatsApp(site.whatsapp_dispatch_number);
+        if (site.round_interval_minutes) setRoundInterval(site.round_interval_minutes);
+      }
+    } catch {
+      // Use fallback defaults
+    }
+  }, [supabase, siteId, generateQrImages]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const timer = setTimeout(() => {
+      if (isMounted) void loadData();
+    }, 0);
     return () => {
       isMounted = false;
+      clearTimeout(timer);
     };
-  }, [generateQrImages]);
+  }, [loadData]);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -115,40 +172,67 @@ export default function AdminPortalPage() {
     const randomSuffix = crypto.randomUUID().slice(0, 8).toUpperCase();
     const qrCodeHash = `EE-CP-${randomSuffix}`;
 
-    const newCp: Checkpoint = {
-      id: crypto.randomUUID(),
-      siteId: '22222222-2222-2222-2222-222222222222',
-      name: newCpName.trim(),
-      qrCodeHash,
-      permittedRadiusMeters: newCpRadius,
-      orderIndex: checkpoints.length + 1,
-      isActive: true
-    };
+    try {
+      const { data: inserted, error: insertError } = await supabase
+        .from('checkpoints')
+        .insert({
+          site_id: siteId,
+          name: newCpName.trim(),
+          qr_code_hash: qrCodeHash,
+          permitted_radius_meters: newCpRadius,
+          order_index: checkpoints.length + 1,
+          is_active: true
+        })
+        .select()
+        .single();
 
-    if (offlineDB) {
-      await offlineDB.checkpoints.add(newCp);
+      if (insertError) {
+        showToast(`Database error: ${insertError.message}`);
+        return;
+      }
+
+      const newCp: Checkpoint = {
+        id: inserted.id,
+        siteId: inserted.site_id,
+        name: inserted.name,
+        qrCodeHash: inserted.qr_code_hash,
+        permittedRadiusMeters: inserted.permitted_radius_meters,
+        orderIndex: inserted.order_index,
+        isActive: inserted.is_active
+      };
+
+      if (offlineDB) {
+        await offlineDB.checkpoints.put(newCp);
+      }
+
       const updated = [...checkpoints, newCp];
       setCheckpoints(updated);
       void generateQrImages(updated);
+      setNewCpName('');
+      showToast(`✓ Checkpoint persisted to Supabase: ${qrCodeHash}`);
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to save checkpoint to database');
     }
-
-    setNewCpName('');
-    showToast(`Checkpoint added with code: ${qrCodeHash}`);
   };
 
   const handleDeleteCheckpoint = async (id: string) => {
-    if (confirm('Delete this checkpoint?')) {
-      if (offlineDB) {
-        await offlineDB.checkpoints.delete(id);
+    if (confirm('Delete this checkpoint from database?')) {
+      try {
+        await supabase.from('checkpoints').delete().eq('id', id);
+        if (offlineDB) {
+          await offlineDB.checkpoints.delete(id);
+        }
         const updated = checkpoints.filter((c) => c.id !== id);
         setCheckpoints(updated);
         void generateQrImages(updated);
+        showToast('✓ Checkpoint removed from database');
+      } catch (err: unknown) {
+        showToast(err instanceof Error ? err.message : 'Failed to delete checkpoint');
       }
-      showToast('Checkpoint removed');
     }
   };
 
-  // Enrol NFC Tag Workflow
+  // Enrol Real NFC Tag Workflow
   const handleEnrolNfcTag = async (checkpoint: Checkpoint) => {
     if (typeof window === 'undefined' || !('NDEFReader' in window)) {
       showToast('Web NFC is not supported on this device/browser. Please use Chrome on Android or QR cards.');
@@ -165,19 +249,38 @@ export default function AdminPortalPage() {
 
       reader.onreading = async (event: WebNdefReadingEvent) => {
         setEnrollingCpId(null);
-        const tagSerial = event.serialNumber || `tag_${crypto.randomUUID().slice(0, 8)}`;
-
-        if (offlineDB) {
-          await offlineDB.checkpoints.update(checkpoint.id, { nfcUid: tagSerial });
+        if (!event.serialNumber) {
+          showToast('NFC Tag detected, but serialNumber could not be read. Please tap tag firmly again.');
+          return;
         }
 
-        const updated = checkpoints.map((c) => (c.id === checkpoint.id ? { ...c, nfcUid: tagSerial } : c));
-        setCheckpoints(updated);
+        const tagSerial = event.serialNumber.replace(/:/g, '').toUpperCase();
 
-        if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          navigator.vibrate([200, 100, 200]);
+        try {
+          const { error: dbError } = await supabase
+            .from('checkpoints')
+            .update({ nfc_uid: tagSerial })
+            .eq('id', checkpoint.id);
+
+          if (dbError) {
+            showToast(`Database update error: ${dbError.message}`);
+            return;
+          }
+
+          if (offlineDB) {
+            await offlineDB.checkpoints.update(checkpoint.id, { nfcUid: tagSerial });
+          }
+
+          const updated = checkpoints.map((c) => (c.id === checkpoint.id ? { ...c, nfcUid: tagSerial } : c));
+          setCheckpoints(updated);
+
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            navigator.vibrate([200, 100, 200]);
+          }
+          showToast(`✓ Real NFC Tag (${tagSerial}) saved to Supabase for ${checkpoint.name}!`);
+        } catch (err: unknown) {
+          showToast(err instanceof Error ? err.message : 'Database error updating NFC tag');
         }
-        showToast(`✓ NFC Tag (${tagSerial}) linked to ${checkpoint.name}!`);
       };
 
       reader.onreadingerror = () => {
@@ -211,8 +314,28 @@ export default function AdminPortalPage() {
     showToast('Guard added to roster');
   };
 
-  const handleSaveSiteConfig = () => {
-    showToast('✓ Site configuration & WhatsApp number saved');
+  const handleSaveSiteConfig = async () => {
+    try {
+      const { error } = await supabase.from('sites').update({
+        name: siteName,
+        code: siteCode,
+        day_shift_start: `${dayStart}:00`,
+        day_shift_end: `${dayEnd}:00`,
+        night_shift_start: `${nightStart}:00`,
+        night_shift_end: `${nightEnd}:00`,
+        round_interval_minutes: roundInterval,
+        emergency_phone: emergencyPhone,
+        whatsapp_dispatch_number: supervisorWhatsApp
+      }).eq('id', siteId);
+
+      if (error) {
+        showToast(`Database error: ${error.message}`);
+      } else {
+        showToast('✓ Site configuration & WhatsApp numbers saved to database');
+      }
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to save configuration');
+    }
   };
 
   return (

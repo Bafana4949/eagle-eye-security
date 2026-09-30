@@ -1,66 +1,305 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { 
   ShieldAlert, 
-  MapPin, 
-  Car, 
   ArrowLeft, 
-  PhoneCall,
-  Check,
-  Compass
+  PhoneCall, 
+  Check, 
+  RefreshCw,
+  LogOut
 } from 'lucide-react';
-import { Card, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { I18nProvider } from '@/lib/i18n/context';
+import { useAuth } from '@/context/AuthContext';
+import { createClient } from '@/lib/supabase/client';
+
+interface LiveGuardOnDuty {
+  id: string;
+  name: string;
+  site: string;
+  shiftStart: string;
+  lastScan?: string;
+  phone?: string;
+}
+
+interface LivePanicAlert {
+  id: string;
+  guardName: string;
+  message: string;
+  time: string;
+  status: string;
+  lat?: number;
+  lng?: number;
+}
+
+interface LiveIncident {
+  id: string;
+  guardName: string;
+  type: string;
+  severity: string;
+  description: string;
+  time: string;
+  status: string;
+  notes?: string;
+}
+
+interface LiveGateEntry {
+  id: string;
+  plate: string;
+  vehicle: string;
+  driver?: string;
+  dir: 'in' | 'out';
+  time: string;
+  purpose?: string;
+  dwell?: string;
+}
+
+interface LiveCheckpoint {
+  id: string;
+  name: string;
+  lat?: number;
+  lng?: number;
+  lastScanned?: string;
+  status: 'scanned' | 'pending';
+}
 
 export default function SupervisorDashboardPage() {
+  const { user, assignedSite, signOut } = useAuth();
+  const supabase = useMemo(() => createClient(), []);
+
   const [activeTab, setActiveTab] = useState<'overview' | 'patrols' | 'incidents' | 'gate' | 'map'>('overview');
-  const [acknowledgedAlerts, setAcknowledgedAlerts] = useState<string[]>([]);
+
+  // Live Database Operational State
+  const [guards, setGuards] = useState<LiveGuardOnDuty[]>([]);
+  const [alerts, setAlerts] = useState<LivePanicAlert[]>([]);
+  const [incidents, setIncidents] = useState<LiveIncident[]>([]);
+  const [gateActivity, setGateActivity] = useState<LiveGateEntry[]>([]);
+  const [checkpointsList, setCheckpointsList] = useState<LiveCheckpoint[]>([]);
+  const [complianceRate, setComplianceRate] = useState<number>(100);
+
   const [supervisorNote, setSupervisorNote] = useState<Record<string, string>>({});
-  const [savedNotes, setSavedNotes] = useState<Record<string, string>>({});
 
-  // Simulated live operational data
-  const guards = [
-    { id: '1', name: 'Wag 1 / Sipho Khoza', site: 'Dawie Boerdery', status: 'on_duty', shiftStart: '18:00', lastScan: '19:42', lastCheckpoint: 'Skaapkraal / East Kraal', compliance: 92, phone: '+27821112222' },
-    { id: '2', name: 'Wag 2 / Petrus Ndlovu', site: 'Dawie Boerdery', status: 'on_duty', shiftStart: '18:00', lastScan: '19:15', lastCheckpoint: 'Hoofhek / Main Gate', compliance: 75, overdue: true, phone: '+27823334444' },
-    { id: '3', name: 'Wag 3 / Thabo Mokoena', site: 'North Boundary', status: 'offline', shiftStart: '–', lastScan: 'Yesterday', lastCheckpoint: 'North Beacon', compliance: 88, phone: '+27825556666' }
-  ];
+  const siteId = assignedSite?.id || '22222222-2222-2222-2222-222222222222';
+  const siteName = assignedSite?.name || 'Dawie Boerdery - Main Site';
 
-  const alerts = [
-    { id: 'alt-1', type: 'overdue_patrol', severity: 'warning', guard: 'Petrus Ndlovu', message: 'Round 2 overdue by 17 minutes at Hoofhek', time: '19:35' },
-    { id: 'alt-2', type: 'sos_panic', severity: 'critical', guard: 'Sipho Khoza', message: 'SOS Panic triggered near East Kraal boundary', time: '19:44', lat: -25.6848, lng: 27.8152 }
-  ];
+  // Load real operational data from Supabase
+  const loadOperationsData = useCallback(async () => {
+    try {
+      // 1. Fetch active shifts & guards on duty
+      const { data: activeShifts } = await supabase
+        .from('shifts')
+        .select('id, guard_id, actual_start, scheduled_start, profiles(first_name, last_name, phone_number)')
+        .eq('site_id', siteId)
+        .eq('status', 'active');
 
-  const incidents = [
-    { id: 'inc-1', guard: 'Sipho Khoza', type: 'Fence Damaged', severity: 'high', description: 'Perimeter wire cut near north river bed. Footprints leading south.', time: '18:50', status: 'reported' },
-    { id: 'inc-2', guard: 'Petrus Ndlovu', type: 'Open Gate', severity: 'medium', description: 'Workshop storage back gate found unlocked and open.', time: '19:10', status: 'acknowledged' }
-  ];
+      if (activeShifts) {
+        const mappedGuards: LiveGuardOnDuty[] = activeShifts.map((s) => {
+          const p = s.profiles as unknown as { first_name?: string; last_name?: string; phone_number?: string } | null;
+          return {
+            id: s.id,
+            name: p ? `${p.first_name || ''} ${p.last_name || ''}`.trim() : 'Active Guard',
+            site: siteName,
+            shiftStart: new Date(s.actual_start || s.scheduled_start).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }),
+            phone: p?.phone_number || '+27 82 111 2222'
+          };
+        });
+        setGuards(mappedGuards);
+      }
 
-  const gateActivity = [
-    { id: 'g-1', plate: 'CA 552-194', vehicle: 'Toyota Hilux (White)', driver: 'J. van der Merwe', dir: 'IN', time: '18:15', purpose: 'Feed Delivery' },
-    { id: 'g-2', plate: 'NW 910-882', vehicle: 'Isuzu D-Max (Silver)', driver: 'S. Botha', dir: 'OUT', time: '19:20', purpose: 'Veterinary Inspection', dwell: '1h 05m' }
-  ];
+      // 2. Fetch live SOS panic alerts
+      const { data: panicData } = await supabase
+        .from('panic_alerts')
+        .select('id, triggered_at, status, latitude, longitude, profiles(first_name, last_name)')
+        .eq('site_id', siteId)
+        .order('triggered_at', { ascending: false })
+        .limit(10);
 
-  const checkpointsList = [
-    { id: 'CP1', name: 'Hoofhek / Main Gate', lat: -25.684120, lng: 27.814520, lastScanned: '19:42', status: 'scanned' },
-    { id: 'CP2', name: 'Skaapkraal / East Kraal', lat: -25.684890, lng: 27.815210, lastScanned: '19:35', status: 'scanned' },
-    { id: 'CP3', name: 'Hoenderhok / Poultry Sheds', lat: -25.683500, lng: 27.814010, lastScanned: 'Pending', status: 'pending' },
-    { id: 'CP4', name: 'Stoor & Werkswinkel', lat: -25.684300, lng: 27.813800, lastScanned: 'Pending', status: 'pending' }
-  ];
+      if (panicData) {
+        const mappedAlerts: LivePanicAlert[] = panicData.map((p) => {
+          const prof = p.profiles as unknown as { first_name?: string; last_name?: string } | null;
+          const gName = prof ? `${prof.first_name || ''} ${prof.last_name || ''}`.trim() : 'Guard';
+          return {
+            id: p.id,
+            guardName: gName,
+            message: `SOS Panic alert triggered by ${gName}`,
+            time: new Date(p.triggered_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }),
+            status: p.status,
+            lat: p.latitude || undefined,
+            lng: p.longitude || undefined
+          };
+        });
+        setAlerts(mappedAlerts);
+      }
 
-  const handleAcknowledgeAlert = (alertId: string) => {
-    setAcknowledgedAlerts((prev) => [...prev, alertId]);
-  };
+      // 3. Fetch real incidents
+      const { data: incData } = await supabase
+        .from('incidents')
+        .select('id, incident_type, severity, description, status, reported_at, supervisor_notes, profiles(first_name, last_name)')
+        .eq('site_id', siteId)
+        .order('reported_at', { ascending: false })
+        .limit(20);
 
-  const handleSaveNote = (incId: string) => {
-    if (supervisorNote[incId]) {
-      setSavedNotes((prev) => ({ ...prev, [incId]: supervisorNote[incId] }));
+      if (incData) {
+        const mappedInc: LiveIncident[] = incData.map((i) => {
+          const prof = i.profiles as unknown as { first_name?: string; last_name?: string } | null;
+          return {
+            id: i.id,
+            guardName: prof ? `${prof.first_name || ''} ${prof.last_name || ''}`.trim() : 'Guard',
+            type: i.incident_type,
+            severity: i.severity,
+            description: i.description || 'No description provided',
+            time: new Date(i.reported_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }),
+            status: i.status,
+            notes: i.supervisor_notes || undefined
+          };
+        });
+        setIncidents(mappedInc);
+      }
+
+      // 4. Fetch checkpoints & today's scans for real compliance
+      const { data: cpsData } = await supabase
+        .from('checkpoints')
+        .select('*')
+        .eq('site_id', siteId)
+        .order('order_index');
+
+      const today = new Date().toISOString().split('T')[0];
+      const { data: todayScans } = await supabase
+        .from('patrol_scans')
+        .select('checkpoint_id, scan_timestamp_device')
+        .gte('scan_timestamp_device', `${today}T00:00:00Z`);
+
+      const scanMap: Record<string, string> = {};
+      (todayScans || []).forEach((s) => {
+        scanMap[s.checkpoint_id] = new Date(s.scan_timestamp_device).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+      });
+
+      if (cpsData) {
+        const mappedCps: LiveCheckpoint[] = cpsData.map((c) => ({
+          id: c.id,
+          name: c.name,
+          lat: c.latitude || undefined,
+          lng: c.longitude || undefined,
+          lastScanned: scanMap[c.id] || 'Pending',
+          status: scanMap[c.id] ? 'scanned' : 'pending'
+        }));
+        setCheckpointsList(mappedCps);
+
+        const scannedCount = Object.keys(scanMap).length;
+        const total = cpsData.length || 1;
+        setComplianceRate(Math.min(100, Math.round((scannedCount / total) * 100)));
+      }
+
+      // 5. Fetch Gate Activity
+      const { data: gateData } = await supabase
+        .from('gate_entries')
+        .select('*')
+        .eq('site_id', siteId)
+        .order('entry_time', { ascending: false })
+        .limit(15);
+
+      if (gateData) {
+        const mappedGate: LiveGateEntry[] = gateData.map((g) => ({
+          id: g.id,
+          plate: g.license_plate,
+          vehicle: `${g.make_model || ''} (${g.vehicle_colour || ''})`.trim() || 'Vehicle',
+          driver: g.driver_name || undefined,
+          dir: g.direction,
+          time: new Date(g.entry_time).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }),
+          purpose: g.visit_reason || g.company || undefined,
+          dwell: g.dwell_duration_seconds ? `${Math.round(g.dwell_duration_seconds / 60)} min` : undefined
+        }));
+        setGateActivity(mappedGate);
+      }
+    } catch (err) {
+      console.warn('Live data fetch error:', err);
+    }
+  }, [supabase, siteId, siteName]);
+
+  // Initial load and Realtime subscriptions
+  useEffect(() => {
+    let isMounted = true;
+    const timer = setTimeout(() => {
+      if (isMounted) void loadOperationsData();
+    }, 0);
+
+    // Setup Supabase Realtime channel
+    const channel = supabase
+      .channel('supervisor-ops-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'patrol_scans' }, () => {
+        void loadOperationsData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'panic_alerts' }, () => {
+        void loadOperationsData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => {
+        void loadOperationsData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'gate_entries' }, () => {
+        void loadOperationsData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, () => {
+        void loadOperationsData();
+      })
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase, loadOperationsData]);
+
+  // Real Database Alert Acknowledgement
+  const handleAcknowledgeAlert = async (alertId: string) => {
+    try {
+      await supabase
+        .from('panic_alerts')
+        .update({
+          status: 'acknowledged',
+          acknowledged_by: user?.id || null,
+          acknowledged_at: new Date().toISOString()
+        })
+        .eq('id', alertId);
+
+      setAlerts((prev) =>
+        prev.map((a) => (a.id === alertId ? { ...a, status: 'acknowledged' } : a))
+      );
+    } catch (err) {
+      console.error('Failed to acknowledge alert in database:', err);
     }
   };
+
+  // Real Database Incident Note & Acknowledgement
+  const handleSaveNote = async (incId: string) => {
+    const note = supervisorNote[incId];
+    if (!note) return;
+
+    try {
+      await supabase
+        .from('incidents')
+        .update({
+          status: 'acknowledged',
+          acknowledged_by: user?.id || null,
+          acknowledged_at: new Date().toISOString(),
+          supervisor_notes: note
+        })
+        .eq('id', incId);
+
+      setIncidents((prev) =>
+        prev.map((i) => (i.id === incId ? { ...i, status: 'acknowledged', notes: note } : i))
+      );
+    } catch (err) {
+      console.error('Failed to save supervisor incident note:', err);
+    }
+  };
+
+  const activeSosCount = alerts.filter((a) => a.status === 'active').length;
 
   return (
     <I18nProvider>
@@ -77,315 +316,336 @@ export default function SupervisorDashboardPage() {
                   <span>Supervisor Operations Command</span>
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
                 </h1>
-                <p className="text-xs text-slate-400">Dawie Boerdery · Aiguille Security Control Room</p>
+                <p className="text-xs text-slate-400">
+                  {siteName} · Control Room (Realtime Active)
+                </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void loadOperationsData()}
+                className="text-xs text-slate-400 hover:text-white gap-1"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Refresh</span>
+              </Button>
+
               <Link href="/viewer">
                 <Button variant="secondary" size="sm" className="hidden sm:inline-flex text-xs">
                   Client Viewer
                 </Button>
               </Link>
+
               <Link href="/admin">
                 <Button variant="primary" size="sm" className="text-xs bg-blue-600 hover:bg-blue-500">
                   Admin Portal
                 </Button>
               </Link>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void signOut()}
+                className="text-xs text-rose-400 hover:text-rose-300"
+              >
+                <LogOut className="w-4 h-4" />
+              </Button>
             </div>
           </div>
         </header>
 
         {/* Main Content Area */}
         <main className="flex-1 max-w-6xl mx-auto w-full p-4 space-y-6">
-          {/* Top Metric Cards */}
+          {/* Top Live Metrics */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <MetricCard
               label="Guards On Duty"
-              value="2"
-              subValue="1 Offline"
-              variant="success"
-            />
-            <MetricCard
-              label="Active Alerts"
-              value={alerts.filter((a) => !acknowledgedAlerts.includes(a.id)).length}
-              subValue="1 Critical SOS"
-              variant="danger"
+              value={guards.length.toString()}
+              subValue="Real active shifts"
+              variant={guards.length > 0 ? 'success' : 'default'}
             />
             <MetricCard
               label="Patrol Compliance"
-              value="85%"
-              subValue="Target 80%+"
-              variant="info"
+              value={`${complianceRate}%`}
+              subValue="Checkpoints scanned today"
+              variant={complianceRate >= 80 ? 'success' : 'warning'}
             />
             <MetricCard
-              label="Vehicles on Farm"
-              value="1"
-              subValue="1 Exited today"
-              variant="warning"
+              label="Active SOS Panic"
+              value={activeSosCount.toString()}
+              subValue={activeSosCount > 0 ? 'Immediate action required' : 'All clear'}
+              variant={activeSosCount > 0 ? 'danger' : 'success'}
+            />
+            <MetricCard
+              label="Vehicles Logged"
+              value={gateActivity.length.toString()}
+              subValue="Gate entries recorded"
+              variant="info"
             />
           </div>
 
-          {/* Critical SOS & Overdue Alert Banner */}
-          {alerts.filter((a) => !acknowledgedAlerts.includes(a.id)).map((alert) => (
-            <div
-              key={alert.id}
-              className={`p-4 rounded-3xl border flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xl ${
-                alert.severity === 'critical'
-                  ? 'bg-rose-950/80 border-rose-600 text-rose-200'
-                  : 'bg-amber-950/80 border-amber-600 text-amber-200'
+          {/* Navigation Tabs */}
+          <div className="flex overflow-x-auto gap-2 border-b border-slate-800 pb-2 text-xs font-bold scrollbar-none">
+            <button
+              onClick={() => setActiveTab('overview')}
+              className={`px-4 py-2 rounded-xl transition-all ${
+                activeTab === 'overview'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
               }`}
             >
-              <div className="flex items-start gap-3">
-                <ShieldAlert className={`w-6 h-6 flex-shrink-0 mt-0.5 ${alert.severity === 'critical' ? 'text-rose-500 animate-bounce' : 'text-amber-400'}`} />
-                <div>
-                  <h4 className="font-bold text-sm text-white flex items-center gap-2">
-                    <span>{alert.guard}</span>
-                    <Badge variant={alert.severity === 'critical' ? 'danger' : 'warning'}>
-                      {alert.type.toUpperCase()}
-                    </Badge>
-                  </h4>
-                  <p className="text-xs mt-0.5 text-slate-200 font-medium">{alert.message}</p>
-                  <p className="text-[11px] font-mono text-slate-400 mt-1">Dispatched at {alert.time}</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <a
-                  href="tel:+27820001234"
-                  className="px-3.5 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs flex items-center gap-1.5"
-                >
-                  <PhoneCall className="w-4 h-4 text-emerald-400" />
-                  <span>Call Guard</span>
-                </a>
-
-                <Button
-                  onClick={() => handleAcknowledgeAlert(alert.id)}
-                  variant="primary"
-                  size="sm"
-                  className="gap-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>Acknowledge Alert</span>
-                </Button>
-              </div>
-            </div>
-          ))}
-
-          {/* Section Navigation Tabs */}
-          <div className="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto">
-            {[
-              { id: 'overview', label: 'Guards on Duty', count: guards.length },
-              { id: 'patrols', label: 'Patrol Compliance' },
-              { id: 'map', label: 'Operations Map' },
-              { id: 'incidents', label: 'Incidents Feed', count: incidents.length },
-              { id: 'gate', label: 'Gate Activity', count: gateActivity.length }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as typeof activeTab)}
-                className={`px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
-                  activeTab === tab.id
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                }`}
-              >
-                {tab.label} {tab.count != null && `(${tab.count})`}
-              </button>
-            ))}
+              Overview & Alerts
+            </button>
+            <button
+              onClick={() => setActiveTab('patrols')}
+              className={`px-4 py-2 rounded-xl transition-all ${
+                activeTab === 'patrols'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Checkpoints ({checkpointsList.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('incidents')}
+              className={`px-4 py-2 rounded-xl transition-all ${
+                activeTab === 'incidents'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Incidents ({incidents.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('gate')}
+              className={`px-4 py-2 rounded-xl transition-all ${
+                activeTab === 'gate'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Gate Logs ({gateActivity.length})
+            </button>
           </div>
 
-          {/* TAB 1: Guards on Duty */}
+          {/* Tab 1: Overview & Alerts */}
           {activeTab === 'overview' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {guards.map((guard) => (
-                <Card key={guard.id} className="border-slate-800 bg-slate-900/90 rounded-3xl p-4">
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <h4 className="text-base font-bold text-white">{guard.name}</h4>
-                      <p className="text-xs text-slate-400">{guard.site}</p>
+            <div className="space-y-6">
+              {/* Critical Alerts Banner */}
+              {alerts.length > 0 && (
+                <Card className="p-4 bg-rose-950/40 border-rose-900/60 rounded-3xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <ShieldAlert className="w-5 h-5 text-rose-400 animate-bounce" />
+                      <h2 className="text-sm font-black text-rose-200 uppercase tracking-wider">
+                        Live SOS & Emergency Alerts
+                      </h2>
                     </div>
-                    <Badge variant={guard.status === 'on_duty' ? 'success' : 'neutral'}>
-                      {guard.status === 'on_duty' ? 'ON DUTY' : 'OFFLINE'}
-                    </Badge>
+                    <Badge variant="danger">{alerts.length} Reported</Badge>
                   </div>
 
-                  <div className="space-y-1.5 text-xs text-slate-300 py-2 border-y border-slate-800/80">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Shift Started:</span>
-                      <span className="font-mono text-slate-200">{guard.shiftStart}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Last Scanned:</span>
-                      <span className="font-mono text-slate-200">{guard.lastScan}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Checkpoint:</span>
-                      <span className="font-semibold text-slate-200 truncate max-w-[160px]">{guard.lastCheckpoint}</span>
-                    </div>
-                  </div>
+                  <div className="space-y-2">
+                    {alerts.map((alt) => (
+                      <div
+                        key={alt.id}
+                        className="p-3.5 rounded-2xl bg-slate-950/80 border border-rose-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-white text-xs">{alt.guardName}</span>
+                            <span className="text-[11px] font-mono text-slate-400">· {alt.time}</span>
+                            {alt.status === 'acknowledged' ? (
+                              <Badge variant="success">Acknowledged</Badge>
+                            ) : (
+                              <Badge variant="danger">ACTIVE SOS</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-rose-200 font-semibold">{alt.message}</p>
+                          {alt.lat && alt.lng && (
+                            <p className="text-[11px] font-mono text-slate-400">
+                              Coordinates: {alt.lat.toFixed(5)}, {alt.lng.toFixed(5)}
+                            </p>
+                          )}
+                        </div>
 
-                  <div className="mt-3 flex items-center justify-between">
+                        {alt.status === 'active' && (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => void handleAcknowledgeAlert(alt.id)}
+                            className="text-xs font-bold shrink-0"
+                          >
+                            <Check className="w-3.5 h-3.5 mr-1" />
+                            Acknowledge in DB
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
+
+              {/* Guards On Duty */}
+              <div className="space-y-3">
+                <h2 className="text-sm font-black text-slate-300 uppercase tracking-wider">
+                  Guards on Duty (Live Shifts)
+                </h2>
+
+                {guards.length === 0 ? (
+                  <Card className="p-6 text-center text-slate-400 text-xs">
+                    No active guard shifts currently on duty. Guards clock in via the Guard Home page.
+                  </Card>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {guards.map((g) => (
+                      <Card key={g.id} className="p-4 bg-slate-900/90 border-slate-800 rounded-2xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-sm text-white">{g.name}</span>
+                          <Badge variant="success">On Duty</Badge>
+                        </div>
+                        <div className="text-xs text-slate-400 space-y-1">
+                          <p>Site: <span className="text-slate-200">{g.site}</span></p>
+                          <p>Shift Started: <span className="text-slate-200 font-mono">{g.shiftStart}</span></p>
+                        </div>
+                        {g.phone && (
+                          <a
+                            href={`tel:${g.phone}`}
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-400 hover:text-blue-300 pt-1"
+                          >
+                            <PhoneCall className="w-3.5 h-3.5" />
+                            <span>Call Guard ({g.phone})</span>
+                          </a>
+                        )}
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Tab 2: Checkpoints */}
+          {activeTab === 'patrols' && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-black text-slate-300 uppercase tracking-wider">
+                Site Patrol Checkpoints ({checkpointsList.length})
+              </h2>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {checkpointsList.map((cp) => (
+                  <Card key={cp.id} className="p-4 bg-slate-900 border-slate-800 rounded-2xl flex items-center justify-between">
                     <div>
-                      <span className="text-[11px] text-slate-500 block">Compliance</span>
-                      <span className={`text-base font-black ${guard.compliance >= 80 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                        {guard.compliance}%
+                      <span className="font-bold text-sm text-white block">{cp.name}</span>
+                      <span className="text-xs text-slate-400">
+                        Today&apos;s Last Scan: <span className="font-mono text-slate-300">{cp.lastScanned}</span>
                       </span>
                     </div>
-
-                    <a
-                      href={`tel:${guard.phone}`}
-                      className="p-2.5 rounded-2xl bg-slate-800 text-blue-400 hover:bg-slate-700"
-                      title="Call Guard"
-                    >
-                      <PhoneCall className="w-5 h-5" />
-                    </a>
-                  </div>
-                </Card>
-              ))}
+                    {cp.status === 'scanned' ? (
+                      <Badge variant="success">Scanned</Badge>
+                    ) : (
+                      <Badge variant="neutral">Pending</Badge>
+                    )}
+                  </Card>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* TAB 2: Patrol Compliance & Rounds */}
-          {activeTab === 'patrols' && (
-            <Card className="rounded-3xl border-slate-800 bg-slate-900/90">
-              <CardHeader>
-                <CardTitle>Hourly Round Verification Log</CardTitle>
-                <Badge variant="info">Target: 1 Round / Hour</Badge>
-              </CardHeader>
-              <div className="space-y-3">
-                {[
-                  { round: 'Round 1 (18:00 – 19:00)', completed: '4/4 checkpoints', compliance: '100%', status: 'success' as const },
-                  { round: 'Round 2 (19:00 – 20:00)', completed: '2/4 checkpoints', compliance: '50% (In Progress)', status: 'warning' as const },
-                  { round: 'Round 3 (20:00 – 21:00)', completed: 'Scheduled', compliance: 'Upcoming', status: 'neutral' as const },
-                  { round: 'Round 4 (21:00 – 22:00)', completed: 'Scheduled', compliance: 'Upcoming', status: 'neutral' as const }
-                ].map((r, i) => (
-                  <div key={i} className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <span className="text-sm font-bold text-white block">{r.round}</span>
-                      <span className="text-xs text-slate-400">{r.completed}</span>
-                    </div>
-                    <Badge variant={r.status}>{r.compliance}</Badge>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {/* TAB 3: Operations Map */}
-          {activeTab === 'map' && (
-            <Card className="rounded-3xl border-slate-800 bg-slate-900/90 p-5">
-              <CardHeader className="mb-3">
-                <div className="flex items-center gap-2">
-                  <Compass className="w-5 h-5 text-blue-400" />
-                  <CardTitle>Perimeter Beacon & Patrol Grid</CardTitle>
-                </div>
-                <Badge variant="success">GPS Geofenced</Badge>
-              </CardHeader>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {checkpointsList.map((cp) => (
-                  <div
-                    key={cp.id}
-                    className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-start justify-between"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={`p-2 rounded-xl ${cp.status === 'scanned' ? 'bg-emerald-950 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
-                        <MapPin className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-bold text-white">{cp.name}</h4>
-                        <p className="text-xs font-mono text-slate-400 mt-0.5">
-                          {cp.lat.toFixed(5)}, {cp.lng.toFixed(5)}
-                        </p>
-                        <p className="text-[11px] text-slate-500 mt-1">
-                          Last Scanned: <span className="font-semibold text-slate-300">{cp.lastScanned}</span>
-                        </p>
-                      </div>
-                    </div>
-                    <Badge variant={cp.status === 'scanned' ? 'success' : 'neutral'}>
-                      {cp.status === 'scanned' ? 'Active' : 'Pending'}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {/* TAB 4: Incidents Feed */}
+          {/* Tab 3: Incidents */}
           {activeTab === 'incidents' && (
             <div className="space-y-3">
-              {incidents.map((inc) => (
-                <Card key={inc.id} className="p-4 rounded-3xl border-slate-800 bg-slate-900/90">
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant={inc.severity === 'high' ? 'danger' : 'warning'}>
-                          {inc.type}
-                        </Badge>
-                        <span className="text-xs text-slate-400">Reported by {inc.guard}</span>
-                      </div>
-                      <p className="text-sm text-slate-200 mt-2 font-medium">{inc.description}</p>
-                    </div>
-                    <span className="text-xs font-mono text-slate-500">{inc.time}</span>
-                  </div>
+              <h2 className="text-sm font-black text-slate-300 uppercase tracking-wider">
+                Reported Incidents ({incidents.length})
+              </h2>
 
-                  {savedNotes[inc.id] && (
-                    <div className="my-2 p-2.5 rounded-xl bg-blue-950/40 border border-blue-900/60 text-xs text-blue-200 font-mono">
-                      <span className="font-bold text-blue-400">Supervisor Note: </span>
-                      <span>{savedNotes[inc.id]}</span>
-                    </div>
-                  )}
-
-                  <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between gap-3">
-                    <input
-                      type="text"
-                      placeholder="Add supervisor notes..."
-                      value={supervisorNote[inc.id] || ''}
-                      onChange={(e) => setSupervisorNote({ ...supervisorNote, [inc.id]: e.target.value })}
-                      className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 w-full"
-                    />
-
-                    <Button variant="secondary" size="sm" onClick={() => handleSaveNote(inc.id)}>
-                      Save Note
-                    </Button>
-                  </div>
+              {incidents.length === 0 ? (
+                <Card className="p-6 text-center text-slate-400 text-xs">
+                  No incidents recorded for this site.
                 </Card>
-              ))}
+              ) : (
+                <div className="space-y-3">
+                  {incidents.map((inc) => (
+                    <Card key={inc.id} className="p-4 bg-slate-900 border-slate-800 rounded-2xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white text-sm">{inc.type}</span>
+                          <Badge variant={inc.severity === 'critical' || inc.severity === 'high' ? 'danger' : 'warning'}>
+                            {inc.severity}
+                          </Badge>
+                        </div>
+                        <span className="text-xs font-mono text-slate-400">{inc.time}</span>
+                      </div>
+
+                      <p className="text-xs text-slate-300 leading-relaxed">{inc.description}</p>
+                      <p className="text-[11px] text-slate-400">Reported by: <span className="text-slate-200">{inc.guardName}</span></p>
+
+                      {inc.notes && (
+                        <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-emerald-300">
+                          <span className="font-bold block">Supervisor Resolution:</span>
+                          {inc.notes}
+                        </div>
+                      )}
+
+                      {inc.status === 'reported' && (
+                        <div className="flex items-center gap-2 pt-1">
+                          <input
+                            type="text"
+                            placeholder="Add resolution notes..."
+                            value={supervisorNote[inc.id] || ''}
+                            onChange={(e) => setSupervisorNote({ ...supervisorNote, [inc.id]: e.target.value })}
+                            className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white"
+                          />
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => void handleSaveNote(inc.id)}
+                            className="text-xs"
+                          >
+                            Resolve in DB
+                          </Button>
+                        </div>
+                      )}
+                    </Card>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
-          {/* TAB 5: Gate Activity */}
+          {/* Tab 4: Gate Activity */}
           {activeTab === 'gate' && (
-            <Card className="rounded-3xl border-slate-800 bg-slate-900/90">
-              <CardHeader className="mb-2">
-                <CardTitle className="text-base">Today&apos;s Gate Log</CardTitle>
-              </CardHeader>
-              <div className="space-y-3">
-                {gateActivity.map((v) => (
-                  <div key={v.id} className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2.5 rounded-xl ${v.dir === 'IN' ? 'bg-blue-950 text-blue-400' : 'bg-emerald-950 text-emerald-400'}`}>
-                        <Car className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <span className="font-mono font-bold text-white text-sm block">{v.plate}</span>
-                        <span className="text-xs text-slate-400">{v.vehicle} · {v.driver}</span>
-                        <span className="text-[11px] text-slate-500 block mt-0.5">{v.purpose}</span>
-                      </div>
-                    </div>
+            <div className="space-y-3">
+              <h2 className="text-sm font-black text-slate-300 uppercase tracking-wider">
+                Vehicle Access Log ({gateActivity.length})
+              </h2>
 
-                    <div className="text-right">
-                      <Badge variant={v.dir === 'IN' ? 'info' : 'success'}>{v.dir}</Badge>
-                      <span className="text-xs font-mono text-slate-400 block mt-1">{v.time}</span>
-                      {v.dwell && (
-                        <span className="text-[10px] font-mono text-amber-400 block">Dwell: {v.dwell}</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
+              {gateActivity.length === 0 ? (
+                <Card className="p-6 text-center text-slate-400 text-xs">
+                  No gate entries recorded yet.
+                </Card>
+              ) : (
+                <div className="space-y-2">
+                  {gateActivity.map((g) => (
+                    <Card key={g.id} className="p-3.5 bg-slate-900 border-slate-800 rounded-2xl flex items-center justify-between text-xs">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-white">{g.plate}</span>
+                          <Badge variant={g.dir === 'in' ? 'success' : 'neutral'}>
+                            {g.dir.toUpperCase()}
+                          </Badge>
+                          {g.dwell && <span className="text-[11px] text-slate-400">Dwell: {g.dwell}</span>}
+                        </div>
+                        <p className="text-slate-400 mt-0.5">{g.vehicle} {g.driver ? `· Driver: ${g.driver}` : ''}</p>
+                      </div>
+                      <span className="font-mono text-slate-400">{g.time}</span>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </main>
       </div>

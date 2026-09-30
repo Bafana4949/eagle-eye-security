@@ -163,10 +163,12 @@ export class OfflineSyncEngine {
                 upsert: true
               });
 
-            if (!uploadError) {
-              const { data: publicData } = supabase.storage.from('evidence-media').getPublicUrl(filePath);
-              uploadedUrls[media.field] = publicData.publicUrl;
+            if (uploadError) {
+              throw new Error(`Evidence upload failed (${media.field}): ${uploadError.message}`);
             }
+
+            // Private evidence storage: Store secure relative object path
+            uploadedUrls[media.field] = filePath;
           }
 
           // 2. Insert record into appropriate database table with idempotency guarantee
