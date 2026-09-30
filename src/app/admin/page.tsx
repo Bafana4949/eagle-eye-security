@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import QRCode from 'qrcode';
 import { 
   Building2, 
@@ -16,7 +17,8 @@ import {
   Radio,
   Smartphone,
   PhoneCall,
-  CheckCircle2
+  CheckCircle2,
+  LogOut
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -38,7 +40,8 @@ interface WebNdefReaderInstance {
 }
 
 export default function AdminPortalPage() {
-  const { assignedSite } = useAuth();
+  const router = useRouter();
+  const { assignedSite, signOut } = useAuth();
   const supabase = React.useMemo(() => createClient(), []);
 
   const [activeSection, setActiveSection] = useState<'checkpoints' | 'sites' | 'guards' | 'branding' | 'audit'>('checkpoints');
@@ -340,41 +343,57 @@ export default function AdminPortalPage() {
 
   return (
     <I18nProvider>
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+      <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col font-sans">
         {/* Toast Alert */}
         {toastMsg && (
-          <div className="fixed top-16 left-4 right-4 z-50 p-3.5 bg-blue-600 text-white font-bold text-sm rounded-xl shadow-2xl text-center max-w-md mx-auto animate-in slide-in-from-top-4 duration-200">
+          <div className="fixed top-16 left-4 right-4 z-50 p-3.5 bg-[#F0A53A] text-[#2A1A04] font-bold text-sm rounded-xl shadow-2xl text-center max-w-md mx-auto border border-[#F0A53A] animate-in slide-in-from-top-4 duration-200">
             {toastMsg}
           </div>
         )}
 
         {/* Header */}
-        <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3">
+        <header className="sticky top-0 z-30 bg-[#18212B]/95 backdrop-blur-md border-b border-[#324050] px-4 py-3">
           <div className="max-w-6xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Link href="/supervisor" className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white">
+              <Link href="/supervisor" className="p-2 rounded-xl bg-[#212C38] border border-[#324050] text-[#9AA5B1] hover:text-[#E9E4D8]">
                 <ArrowLeft className="w-5 h-5" />
               </Link>
               <div>
-                <h1 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                <h1 className="text-lg font-bold text-[#E9E4D8] tracking-tight flex items-center gap-2">
                   <span>Administration & Hardware Configuration</span>
-                  <Badge variant="neutral">Admin</Badge>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#F0A53A]/20 text-[#F0A53A] border border-[#F0A53A]/40 uppercase">
+                    Admin
+                  </span>
                 </h1>
-                <p className="text-xs text-slate-400">Manage sites, NFC checkpoints, roster & device tests</p>
+                <p className="text-xs text-[#9AA5B1]">Manage sites, NFC checkpoints, roster & device tests</p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
               <Link href="/admin/device-test">
-                <Button variant="secondary" size="sm" className="gap-1.5 border-purple-500/40 text-purple-300">
+                <Button variant="secondary" size="sm" className="gap-1.5 text-xs text-[#F0A53A] border-[#F0A53A]/40">
                   <Smartphone className="w-4 h-4" />
                   <span className="hidden sm:inline">Hardware Diagnostics</span>
                 </Button>
               </Link>
 
-              <Button onClick={handlePrintCards} variant="primary" size="sm" className="gap-1.5">
+              <Button onClick={handlePrintCards} variant="primary" size="sm" className="gap-1.5 font-bold text-xs">
                 <Printer className="w-4 h-4" />
                 <span>Print QR Cards</span>
+              </Button>
+
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  await signOut();
+                  router.push('/login');
+                }}
+                className="text-xs text-[#E0685C] hover:text-white hover:bg-[#B3261E] hover:border-[#B3261E] gap-1 font-semibold"
+                title="Log Out of Eagle Eye"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Log Out</span>
               </Button>
             </div>
           </div>
@@ -383,7 +402,7 @@ export default function AdminPortalPage() {
         {/* Main Content */}
         <main className="flex-1 max-w-6xl mx-auto w-full p-4 space-y-6">
           {/* Section Navigation */}
-          <div className="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto">
+          <div className="flex items-center gap-2 border-b border-[#324050] pb-2 overflow-x-auto">
             {[
               { id: 'checkpoints', label: 'Checkpoints & QR / NFC', icon: QrCode },
               { id: 'sites', label: 'Site & Shift Schedules', icon: Building2 },
@@ -397,8 +416,8 @@ export default function AdminPortalPage() {
                   onClick={() => setActiveSection(tab.id as typeof activeSection)}
                   className={`px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all whitespace-nowrap ${
                     activeSection === tab.id
-                      ? 'bg-blue-600 text-white shadow-md'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                      ? 'bg-[#F0A53A] text-[#2A1A04] shadow-md'
+                      : 'text-[#9AA5B1] hover:text-[#E9E4D8] hover:bg-[#212C38]'
                   }`}
                 >
                   <Icon className="w-4 h-4" />

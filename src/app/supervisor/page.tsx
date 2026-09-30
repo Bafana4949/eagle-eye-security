@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { 
   ShieldAlert, 
   ArrowLeft, 
@@ -69,6 +70,7 @@ interface LiveCheckpoint {
 }
 
 export default function SupervisorDashboardPage() {
+  const router = useRouter();
   const { user, assignedSite, signOut } = useAuth();
   const supabase = useMemo(() => createClient(), []);
 
@@ -303,20 +305,20 @@ export default function SupervisorDashboardPage() {
 
   return (
     <I18nProvider>
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+      <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col font-sans">
         {/* Top Management Navbar */}
-        <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-4 py-3">
+        <header className="sticky top-0 z-30 bg-[#18212B]/95 backdrop-blur-md border-b border-[#324050] px-4 py-3">
           <div className="max-w-6xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Link href="/guard" className="p-2 rounded-2xl bg-slate-800 text-slate-300 hover:text-white">
+              <Link href="/guard" className="p-2 rounded-xl bg-[#212C38] border border-[#324050] text-[#9AA5B1] hover:text-[#E9E4D8]">
                 <ArrowLeft className="w-5 h-5" />
               </Link>
               <div>
-                <h1 className="text-lg font-black text-white tracking-tight flex items-center gap-2">
+                <h1 className="text-lg font-bold text-[#E9E4D8] tracking-tight flex items-center gap-2">
                   <span>Supervisor Operations Command</span>
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#76C08F] animate-pulse" />
                 </h1>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-[#9AA5B1]">
                   {siteName} · Control Room (Realtime Active)
                 </p>
               </div>
@@ -327,7 +329,7 @@ export default function SupervisorDashboardPage() {
                 variant="ghost"
                 size="sm"
                 onClick={() => void loadOperationsData()}
-                className="text-xs text-slate-400 hover:text-white gap-1"
+                className="text-xs text-[#9AA5B1] hover:text-[#E9E4D8] gap-1"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Refresh</span>
@@ -340,18 +342,23 @@ export default function SupervisorDashboardPage() {
               </Link>
 
               <Link href="/admin">
-                <Button variant="primary" size="sm" className="text-xs bg-blue-600 hover:bg-blue-500">
+                <Button variant="primary" size="sm" className="text-xs font-bold">
                   Admin Portal
                 </Button>
               </Link>
 
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
-                onClick={() => void signOut()}
-                className="text-xs text-rose-400 hover:text-rose-300"
+                onClick={async () => {
+                  await signOut();
+                  router.push('/login');
+                }}
+                className="text-xs text-[#E0685C] hover:text-white hover:bg-[#B3261E] hover:border-[#B3261E] gap-1 font-semibold"
+                title="Log Out of Eagle Eye"
               >
-                <LogOut className="w-4 h-4" />
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Log Out</span>
               </Button>
             </div>
           </div>

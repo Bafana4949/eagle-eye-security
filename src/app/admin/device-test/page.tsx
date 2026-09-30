@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, 
   Camera, 
@@ -17,11 +18,13 @@ import {
   AlertTriangle, 
   RefreshCw,
   Smartphone,
-  Info
+  Info,
+  LogOut
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { useAuth } from '@/context/AuthContext';
 import { triggerAlarmBeep, requestScreenWakeLock, releaseScreenWakeLock } from '@/lib/patrol/alarm';
 import { isNativePdf417Supported } from '@/lib/license-disc/scanner';
 
@@ -50,6 +53,8 @@ interface WebNdefReader {
 }
 
 export default function DeviceHardwareTestPage() {
+  const router = useRouter();
+  const { signOut } = useAuth();
   const [cameraStatus, setCameraStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
   const [gpsStatus, setGpsStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
   const [nfcStatus, setNfcStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
@@ -276,36 +281,52 @@ export default function DeviceHardwareTestPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans pb-12">
+    <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col font-sans pb-12">
       {/* Top Header */}
-      <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3">
+      <header className="sticky top-0 z-30 bg-[#18212B]/95 backdrop-blur-md border-b border-[#324050] px-4 py-3">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Link href="/admin" className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white">
+            <Link href="/admin" className="p-2 rounded-xl bg-[#212C38] border border-[#324050] text-[#9AA5B1] hover:text-[#E9E4D8]">
               <ArrowLeft className="w-5 h-5" />
             </Link>
             <div>
-              <h1 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+              <h1 className="text-lg font-bold text-[#E9E4D8] tracking-tight flex items-center gap-2">
                 <span>Device & Hardware Diagnostic Test</span>
               </h1>
-              <p className="text-xs text-slate-400">Validate smartphone sensors, cameras, NFC & storage</p>
+              <p className="text-xs text-[#9AA5B1]">Validate smartphone sensors, cameras, NFC & storage</p>
             </div>
           </div>
 
-          <Button onClick={() => void runDiagnostics()} variant="secondary" size="sm" className="gap-1.5">
-            <RefreshCw className="w-4 h-4" />
-            <span>Re-test</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => void runDiagnostics()} variant="secondary" size="sm" className="gap-1.5 text-xs">
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Re-test</span>
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={async () => {
+                await signOut();
+                router.push('/login');
+              }}
+              className="text-xs text-[#E0685C] hover:text-white hover:bg-[#B3261E] hover:border-[#B3261E] gap-1 font-semibold"
+              title="Log Out of Eagle Eye"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Log Out</span>
+            </Button>
+          </div>
         </div>
       </header>
 
       {/* Main Container */}
       <main className="flex-1 max-w-4xl mx-auto w-full p-4 space-y-6">
         {/* Hardware Capability Matrix */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Smartphone className="w-5 h-5 text-blue-400" />
+        <Card className="bg-[#212C38] border-[#324050] rounded-2xl">
+          <CardHeader className="border-b border-[#324050]">
+            <CardTitle className="text-base text-[#E9E4D8] flex items-center gap-2">
+              <Smartphone className="w-5 h-5 text-[#F0A53A]" />
               <span>Core Mobile Hardware Sensors</span>
             </CardTitle>
           </CardHeader>

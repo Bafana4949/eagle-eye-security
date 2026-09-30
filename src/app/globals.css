@@ -1,26 +1,65 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --night: #18212B;
+  --panel: #212C38;
+  --line: #324050;
+  --bone: #E9E4D8;
+  --dim: #9AA5B1;
+  --lamp: #F0A53A;
+  --lamp-deep: #C9801C;
+  --ok: #76C08F;
+  --bad: #E0685C;
+  --panic-bg: #B3261E;
+  --panic-panel: #7A1812;
+
+  --background: #18212B;
+  --foreground: #E9E4D8;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+html, body {
+  background-color: #18212B;
+  color: #E9E4D8;
+  font-family: var(--font-barlow, system-ui, -apple-system, sans-serif);
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Punch-clock round button from Dawie's design */
+.punch-btn {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: none;
+  background: radial-gradient(circle at 35% 30%, #FFC76A, #F0A53A 45%, #C9801C);
+  color: #2A1A04;
+  box-shadow: 0 0 0 8px rgba(240, 165, 58, 0.15), 0 0 0 16px rgba(240, 165, 58, 0.05);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.punch-btn:active {
+  transform: scale(0.96);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Focus outline matching signature lantern */
+:focus-visible {
+  outline: 2px solid #F0A53A;
+  outline-offset: 2px;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #18212B;
+}
+::-webkit-scrollbar-thumb {
+  background: #324050;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #F0A53A;
 }

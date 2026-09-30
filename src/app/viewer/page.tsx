@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { 
   ShieldCheck, 
   Printer, 
@@ -43,6 +44,7 @@ interface ViewerVehicle {
 }
 
 export default function ClientViewerPortal() {
+  const router = useRouter();
   const { profile, assignedSite, signOut } = useAuth();
   const supabase = useMemo(() => createClient(), []);
 
@@ -134,20 +136,22 @@ export default function ClientViewerPortal() {
 
   return (
     <I18nProvider>
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+      <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col font-sans">
         {/* Top Header */}
-        <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-4 py-3">
+        <header className="sticky top-0 z-30 bg-[#18212B]/95 backdrop-blur-md border-b border-[#324050] px-4 py-3">
           <div className="max-w-6xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-700 to-indigo-600 flex items-center justify-center text-white shadow-md">
-                <ShieldCheck className="w-6 h-6" />
+              <div className="w-10 h-10 rounded-xl bg-radial from-[#FFC76A] via-[#F0A53A] to-[#C9801C] flex items-center justify-center text-[#2A1A04] shadow-md border border-[#F0A53A]/70">
+                <ShieldCheck className="w-6 h-6 stroke-[2.5]" />
               </div>
               <div>
-                <h1 className="text-base font-black text-white tracking-tight flex items-center gap-2">
+                <h1 className="text-base font-bold text-[#E9E4D8] tracking-tight flex items-center gap-2">
                   <span>Client Operations Portal</span>
-                  <Badge variant="info">Read Only</Badge>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#F0A53A]/20 text-[#F0A53A] border border-[#F0A53A]/40 uppercase">
+                    Read Only
+                  </span>
                 </h1>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-[#9AA5B1]">
                   {clientName} · {siteName}
                 </p>
               </div>
@@ -158,7 +162,7 @@ export default function ClientViewerPortal() {
                 onClick={() => void loadViewerData()}
                 variant="ghost"
                 size="sm"
-                className="gap-1.5 text-xs text-slate-400 hover:text-white"
+                className="gap-1.5 text-xs text-[#9AA5B1] hover:text-[#E9E4D8]"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Refresh</span>
@@ -175,12 +179,17 @@ export default function ClientViewerPortal() {
               </Button>
 
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
-                onClick={() => void signOut()}
-                className="text-xs text-rose-400 hover:text-rose-300"
+                onClick={async () => {
+                  await signOut();
+                  router.push('/login');
+                }}
+                className="text-xs text-[#E0685C] hover:text-white hover:bg-[#B3261E] hover:border-[#B3261E] gap-1 font-semibold"
+                title="Log Out of Eagle Eye"
               >
-                <LogOut className="w-4 h-4" />
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Log Out</span>
               </Button>
             </div>
           </div>

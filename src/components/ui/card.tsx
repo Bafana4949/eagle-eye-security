@@ -9,7 +9,7 @@ export function Card({
   return (
     <div
       className={twMerge(
-        'bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl backdrop-blur-sm',
+        'bg-[#212C38] border border-[#324050] rounded-2xl p-5 shadow-lg text-[#E9E4D8]',
         className
       )}
       {...props}
@@ -25,7 +25,7 @@ export function CardHeader({
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={twMerge('flex items-center justify-between pb-3 border-b border-slate-800/60 mb-4', className)} {...props}>
+    <div className={twMerge('flex items-center justify-between pb-3 border-b border-[#324050] mb-4', className)} {...props}>
       {children}
     </div>
   );
@@ -37,7 +37,7 @@ export function CardTitle({
   ...props
 }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
-    <h3 className={twMerge('text-lg font-bold text-slate-100 tracking-tight', className)} {...props}>
+    <h3 className={twMerge('text-lg font-bold text-[#E9E4D8] tracking-tight', className)} {...props}>
       {children}
     </h3>
   );

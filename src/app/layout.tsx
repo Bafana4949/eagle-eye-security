@@ -1,21 +1,23 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Barlow, Barlow_Condensed } from "next/font/google";
 import { PwaRegistrar } from "@/components/shared/PwaRegistrar";
 import { AuthProvider } from "@/context/AuthContext";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const barlow = Barlow({
+  weight: ["400", "500", "600", "700"],
   subsets: ["latin"],
+  variable: "--font-barlow",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const barlowCondensed = Barlow_Condensed({
+  weight: ["500", "600", "700"],
   subsets: ["latin"],
+  variable: "--font-barlow-condensed",
 });
 
 export const viewport: Viewport = {
-  themeColor: "#0f172a",
+  themeColor: "#18212B",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -42,9 +44,9 @@ export default function RootLayout({
   return (
     <html
       lang="af"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased bg-slate-950 text-slate-100`}
+      className={`${barlow.variable} ${barlowCondensed.variable} h-full antialiased bg-[#18212B] text-[#E9E4D8]`}
     >
-      <body className="min-h-full flex flex-col bg-slate-950">
+      <body className="min-h-full flex flex-col bg-[#18212B] text-[#E9E4D8]">
         <PwaRegistrar />
         <AuthProvider>{children}</AuthProvider>
       </body>

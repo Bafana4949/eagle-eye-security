@@ -257,15 +257,15 @@ export default function GuardPatrolPage() {
       )}
 
       {/* GPS Status Banner */}
-      <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-xs shadow-md">
+      <div className="flex items-center justify-between p-3.5 rounded-xl bg-[#212C38] border border-[#324050] text-xs shadow-md">
         <div className="flex items-center gap-2.5">
-          <Navigation className="w-4 h-4 text-emerald-400 animate-pulse" />
-          <span className="font-bold text-slate-200">
+          <Navigation className="w-4 h-4 text-[#76C08F] animate-pulse" />
+          <span className="font-bold text-[#E9E4D8]">
             {currentGps ? `GPS: ±${currentGps.acc}m Accuracy` : 'Acquiring GPS Signal...'}
           </span>
         </div>
         {currentGps && (
-          <span className="font-mono text-slate-400 text-[11px]">
+          <span className="font-mono text-[#9AA5B1] text-[11px]">
             {currentGps.lat.toFixed(4)}, {currentGps.lng.toFixed(4)}
           </span>
         )}
@@ -277,7 +277,7 @@ export default function GuardPatrolPage() {
           onClick={() => setShowQrModal(true)}
           variant="primary"
           size="touch"
-          className="gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 shadow-xl shadow-blue-950/60 font-bold"
+          className="gap-2 font-bold shadow-lg shadow-[#F0A53A]/20"
         >
           <QrCode className="w-6 h-6" />
           <span>{t('scanQrCard')}</span>
@@ -289,17 +289,17 @@ export default function GuardPatrolPage() {
           size="touch"
           className="gap-2 font-bold"
         >
-          <Radio className={`w-6 h-6 ${isNfcActive ? 'text-emerald-400 animate-pulse' : ''}`} />
+          <Radio className={`w-6 h-6 ${isNfcActive ? 'text-[#76C08F] animate-pulse' : ''}`} />
           <span>{isNfcActive ? 'NFC Active' : t('scanNfcTag')}</span>
         </Button>
       </div>
 
       {/* Checkpoints Route Sequence */}
-      <Card className="rounded-3xl border-slate-800 bg-slate-900/90">
-        <CardHeader className="mb-2">
+      <Card className="rounded-2xl border-[#324050] bg-[#212C38]">
+        <CardHeader className="mb-2 border-b border-[#324050]">
           <div className="flex items-center gap-2">
-            <MapPin className="w-5 h-5 text-blue-400" />
-            <CardTitle>Patrol Route Checkpoints</CardTitle>
+            <MapPin className="w-5 h-5 text-[#F0A53A]" />
+            <CardTitle className="text-[#E9E4D8]">Patrol Route Checkpoints</CardTitle>
           </div>
           <Badge variant={completedCount === totalCount ? 'success' : 'info'}>
             {completedCount} / {totalCount} Completed
@@ -314,27 +314,27 @@ export default function GuardPatrolPage() {
             return (
               <div
                 key={cp.id}
-                className={`p-3.5 rounded-2xl border transition-all ${
+                className={`p-3.5 rounded-xl border transition-all ${
                   isCompleted
-                    ? 'bg-emerald-950/20 border-emerald-800/60 shadow-sm'
-                    : 'bg-slate-900/80 border-slate-800/80'
+                    ? 'bg-[#76C08F]/15 border-[#76C08F]/40 shadow-sm'
+                    : 'bg-[#18212B] border-[#324050]'
                 }`}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3">
                     <div
-                      className={`w-7 h-7 rounded-xl flex items-center justify-center font-bold text-xs ${
-                        isCompleted ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400'
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs ${
+                        isCompleted ? 'bg-[#76C08F] text-[#18212B]' : 'bg-[#212C38] text-[#9AA5B1] border border-[#324050]'
                       }`}
                     >
                       {idx + 1}
                     </div>
                     <div>
-                      <h4 className="text-sm font-bold text-white leading-snug">{cp.name}</h4>
+                      <h4 className="text-sm font-bold text-[#E9E4D8] leading-snug">{cp.name}</h4>
                       {cp.description && (
-                        <p className="text-xs text-slate-400 mt-0.5">{cp.description}</p>
+                        <p className="text-xs text-[#9AA5B1] mt-0.5">{cp.description}</p>
                       )}
-                      <p className="text-[11px] font-mono text-slate-500 mt-1">
+                      <p className="text-[11px] font-mono text-[#9AA5B1] mt-1">
                         Radius: {cp.permittedRadiusMeters}m · Tag: {cp.qrCodeHash}
                       </p>
                     </div>
@@ -345,7 +345,7 @@ export default function GuardPatrolPage() {
                       <Badge variant={scan.isValidProximity ? 'success' : 'danger'}>
                         {scan.isValidProximity ? 'Verified' : 'Out of Range'}
                       </Badge>
-                      <p className="text-[11px] text-slate-400 font-mono mt-1">
+                      <p className="text-[11px] text-[#9AA5B1] font-mono mt-1">
                         {formatTimeHM(scan.scanTimestampDevice)}
                       </p>
                     </div>

@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ShieldCheck, Lock, User, ArrowRight, Eye, AlertCircle } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -102,29 +101,30 @@ export default function LoginPage() {
 
   return (
     <I18nProvider>
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center p-4">
+      <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col justify-center items-center p-4">
         <div className="max-w-md w-full space-y-6">
-          {/* Logo & Heading */}
+          {/* Logo & Heading in Dawie's Style */}
           <div className="text-center space-y-2">
-            <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-blue-700 to-indigo-500 mx-auto flex items-center justify-center shadow-xl shadow-blue-900/40 border border-blue-400/30">
-              <ShieldCheck className="w-9 h-9 text-white" />
+            <div className="w-16 h-16 rounded-2xl bg-radial from-[#FFC76A] via-[#F0A53A] to-[#C9801C] mx-auto flex items-center justify-center shadow-xl shadow-[#F0A53A]/20 border border-[#F0A53A]/70 text-[#2A1A04]">
+              <ShieldCheck className="w-9 h-9 stroke-[2.5]" />
             </div>
-            <h1 className="text-2xl font-black text-white tracking-tight">
+            <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-[#E9E4D8]">
               EAGLE EYE SECURITY
             </h1>
-            <p className="text-xs text-slate-400">
-              Operations & Mobile Guard Management Platform
+            <p className="text-xs text-[#9AA5B1] uppercase tracking-wider font-semibold">
+              Aiguille Security & Dawie Boerdery
             </p>
           </div>
 
-          {/* Mode Selector */}
-          <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-2xl bg-slate-900 border border-slate-800">
+          {/* Mode Selector Tabs */}
+          <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-xl bg-[#212C38] border border-[#324050]">
             <button
+              type="button"
               onClick={() => handleSelectPreset('guard')}
-              className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+              className={`py-2.5 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition-all ${
                 authMode === 'guard'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-[#F0A53A] text-[#2A1A04] font-bold shadow-md'
+                  : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
               }`}
             >
               <User className="w-3.5 h-3.5" />
@@ -132,42 +132,44 @@ export default function LoginPage() {
             </button>
 
             <button
+              type="button"
               onClick={() => handleSelectPreset('manager')}
-              className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+              className={`py-2.5 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition-all ${
                 authMode === 'manager'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-[#F0A53A] text-[#2A1A04] font-bold shadow-md'
+                  : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
               }`}
             >
               <Lock className="w-3.5 h-3.5" />
-              <span>Supervisor</span>
+              <span>Supervisor / Admin</span>
             </button>
 
             <button
+              type="button"
               onClick={() => handleSelectPreset('viewer')}
-              className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+              className={`py-2.5 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition-all ${
                 authMode === 'viewer'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-[#F0A53A] text-[#2A1A04] font-bold shadow-md'
+                  : 'text-[#9AA5B1] hover:text-[#E9E4D8]'
               }`}
             >
               <Eye className="w-3.5 h-3.5" />
-              <span>Client</span>
+              <span>Client Viewer</span>
             </button>
           </div>
 
           {/* Login Card */}
-          <Card className="p-6 border-slate-800 rounded-3xl bg-slate-900/90 shadow-2xl">
+          <Card className="p-6 border-[#324050] rounded-2xl bg-[#212C38] shadow-2xl">
             {errorMsg && (
-              <div className="mb-4 p-3.5 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs font-semibold flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+              <div className="mb-4 p-3.5 rounded-xl bg-[#E0685C]/15 border border-[#E0685C] text-[#E0685C] text-xs font-semibold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-[#E0685C]" />
                 <span>{errorMsg}</span>
               </div>
             )}
 
             <form onSubmit={(e) => handleSignIn(e, authMode)} className="space-y-4">
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1">
+                <label className="text-xs font-semibold text-[#9AA5B1] block mb-1.5">
                   Email Address / Identifier
                 </label>
                 <input
@@ -176,12 +178,12 @@ export default function LoginPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="name@aiguillesecurity.co.za"
                   required
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                  className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-4 py-3 text-sm text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1">
+                <label className="text-xs font-semibold text-[#9AA5B1] block mb-1.5">
                   Password
                 </label>
                 <input
@@ -190,37 +192,37 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••••••"
                   required
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-base text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-[#18212B] border border-[#324050] rounded-xl px-4 py-3 text-base text-[#E9E4D8] focus:outline-none focus:border-[#F0A53A] focus:ring-1 focus:ring-[#F0A53A]"
                 />
               </div>
 
               {authMode === 'guard' && (
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 space-y-1">
-                  <div className="flex justify-between items-center text-slate-300 font-semibold">
+                <div className="p-3 rounded-xl bg-[#18212B] border border-[#324050] text-xs text-[#9AA5B1] space-y-1">
+                  <div className="flex justify-between items-center text-[#E9E4D8] font-semibold">
                     <span>Guard Station:</span>
-                    <span className="text-blue-400 font-mono">Dawie Boerdery (Hoofplaas)</span>
+                    <span className="text-[#F0A53A]">Dawie Boerdery (Main Site)</span>
                   </div>
-                  <p>Guards authenticate with assigned security credentials to start patrols and gate duty.</p>
+                  <p className="text-[11px] text-[#9AA5B1]">Clock in with selfie + GPS, scan patrol tags, and log vehicle discs.</p>
                 </div>
               )}
 
               {authMode === 'manager' && (
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 space-y-1">
-                  <div className="flex justify-between items-center text-slate-300 font-semibold">
+                <div className="p-3 rounded-xl bg-[#18212B] border border-[#324050] text-xs text-[#9AA5B1] space-y-1">
+                  <div className="flex justify-between items-center text-[#E9E4D8] font-semibold">
                     <span>Command Center:</span>
-                    <span className="text-blue-400">Supervisor & Admin Access</span>
+                    <span className="text-[#F0A53A]">Supervisor & Admin Access</span>
                   </div>
-                  <p>Admins route to Admin Portal; Supervisors route to Live Operations Dashboard.</p>
+                  <p className="text-[11px] text-[#9AA5B1]">Admins configure sites/checkpoints; Supervisors monitor active shifts & SOS.</p>
                 </div>
               )}
 
               {authMode === 'viewer' && (
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 space-y-1">
-                  <div className="flex justify-between items-center text-slate-300 font-semibold">
+                <div className="p-3 rounded-xl bg-[#18212B] border border-[#324050] text-xs text-[#9AA5B1] space-y-1">
+                  <div className="flex justify-between items-center text-[#E9E4D8] font-semibold">
                     <span>Client Portal:</span>
-                    <span className="text-indigo-400">Dawie Snyman (Client Owner)</span>
+                    <span className="text-[#F0A53A]">Dawie Boerdery (Farm Owner)</span>
                   </div>
-                  <p>Read-only live compliance reports, patrol timeline, and gate log monitoring.</p>
+                  <p className="text-[11px] text-[#9AA5B1]">Read-only live compliance inspection, patrol timeline, and attendance reports.</p>
                 </div>
               )}
 
@@ -229,19 +231,17 @@ export default function LoginPage() {
                 variant="primary"
                 size="touch"
                 isLoading={isLoading}
-                className="w-full mt-2 font-bold"
+                className="w-full mt-2 font-bold text-base"
               >
-                <span>Authenticate & Enter App</span>
+                <span>Sign In to Eagle Eye</span>
                 <ArrowRight className="w-5 h-5 ml-2" />
               </Button>
             </form>
           </Card>
 
-          <div className="text-center">
-            <Link href="/" className="text-xs text-slate-500 hover:text-slate-300">
-              ← Return to Portal Selection
-            </Link>
-          </div>
+          <p className="text-center text-xs text-[#9AA5B1]">
+            Eagle Eye Security Operations &copy; 2026. All rights reserved.
+          </p>
         </div>
       </div>
     </I18nProvider>

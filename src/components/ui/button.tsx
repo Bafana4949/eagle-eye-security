@@ -23,12 +23,12 @@ export function Button({
     'inline-flex items-center justify-center font-semibold rounded-xl transition-all duration-150 select-none active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900';
 
   const variants = {
-    primary: 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/30 focus:ring-blue-500',
-    secondary: 'bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 focus:ring-slate-400',
-    danger: 'bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-900/30 focus:ring-rose-500',
-    warning: 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-900/30 focus:ring-amber-500',
-    outline: 'bg-transparent hover:bg-slate-800/60 text-slate-200 border border-slate-600 focus:ring-slate-400',
-    ghost: 'bg-transparent hover:bg-slate-800/40 text-slate-300 focus:ring-slate-400'
+    primary: 'bg-[#F0A53A] hover:bg-[#FFC76A] active:bg-[#C9801C] text-[#2A1A04] font-bold border border-[#F0A53A] shadow-md shadow-[#F0A53A]/20 focus:ring-[#F0A53A]',
+    secondary: 'bg-[#212C38] hover:bg-[#2B3948] text-[#E9E4D8] border border-[#324050] focus:ring-[#9AA5B1]',
+    danger: 'bg-[#B3261E] hover:bg-[#E0685C] text-white border border-[#B3261E] shadow-md shadow-red-950/40 focus:ring-[#E0685C]',
+    warning: 'bg-[#F0A53A] hover:bg-[#C9801C] text-[#2A1A04] border border-[#F0A53A] focus:ring-[#F0A53A]',
+    outline: 'bg-transparent hover:bg-[#212C38] text-[#E9E4D8] border border-[#324050] focus:ring-[#F0A53A]',
+    ghost: 'bg-transparent hover:bg-[#212C38]/70 text-[#9AA5B1] hover:text-[#E9E4D8] focus:ring-[#9AA5B1]'
   };
 
   const sizes = {

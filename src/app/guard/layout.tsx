@@ -6,15 +6,18 @@ import { BottomNav } from '@/components/guard/BottomNav';
 import { SosPanicModal } from '@/components/guard/SosPanicModal';
 import { I18nProvider } from '@/lib/i18n/context';
 
+import { useAuth } from '@/context/AuthContext';
+
 export default function GuardLayout({ children }: { children: React.ReactNode }) {
-  // Demo default context for seamless offline mobile operation
-  const guardId = '55555555-5555-5555-5555-555555555555';
-  const siteId = '22222222-2222-2222-2222-222222222222';
-  const guardName = 'Wag 1 / Guard Sipho';
+  const { user, profile, assignedSite } = useAuth();
+  
+  const guardId = user?.id || '';
+  const siteId = assignedSite?.id || '';
+  const guardName = profile ? `${profile.first_name} ${profile.last_name}` : 'Wag op diens';
 
   return (
     <I18nProvider>
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+      <div className="min-h-screen bg-[#18212B] text-[#E9E4D8] flex flex-col font-sans selection:bg-[#F0A53A] selection:text-[#2A1A04]">
         <HeaderBar guardName={guardName} />
         <main className="flex-1 max-w-md mx-auto w-full px-4 pt-4 pb-28">
           {children}
