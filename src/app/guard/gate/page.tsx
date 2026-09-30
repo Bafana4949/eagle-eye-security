@@ -9,7 +9,8 @@ import {
   Clock, 
   Check, 
   FileText,
-  LogOut
+  LogOut,
+  MessageSquareShare
 } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n/context';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,11 @@ import { syncEngine } from '@/lib/offline/sync';
 import { GateEntry, LicenseDiscData } from '@/types/models';
 import { formatDuration } from '@/features/shifts/shiftCalculator';
 import { useAuth } from '@/context/AuthContext';
+import { 
+  buildVehicleWhatsAppUrl, 
+  GATE_DISPATCH_WHATSAPP_NUMBER, 
+  VehicleNotificationData 
+} from '@/lib/whatsapp/vehicle';
 
 export default function GuardGatePage() {
   const { t } = useTranslation();
@@ -50,6 +56,11 @@ export default function GuardGatePage() {
   const [vehiclesOnSite, setVehiclesOnSite] = useState<GateEntry[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState<number>(() => (typeof window !== 'undefined' ? Date.now() : 0));
+  const [lastDispatchedWhatsApp, setLastDispatchedWhatsApp] = useState<{
+    url: string;
+    plate: string;
+    direction: 'in' | 'out';
+  } | null>(null);
 
   // Dynamic Session & Tactical IDs (never hardcoded)
   const guardId = user?.id || profile?.id || 'e495f1f3-72a0-4231-86fb-617c4624bbe5';
@@ -157,7 +168,35 @@ export default function GuardGatePage() {
       });
     }
 
-    showToast(`✓ Vehicle exit recorded: ${entry.licensePlate} (${formatDuration(dwellSeconds * 1000)})`);
+    // Auto-dispatch WhatsApp notification to 0660179070 with exit info and dwell duration
+    const exitNotification: VehicleNotificationData = {
+      direction: 'out',
+      licensePlate: entry.licensePlate,
+      makeModel: entry.makeModel,
+      vehicleColour: entry.vehicleColour,
+      vinNumber: entry.vinNumber,
+      driverName: entry.driverName,
+      driverPhone: entry.driverPhone,
+      company: entry.company,
+      visitReason: entry.visitReason,
+      entryTime: entry.entryTime,
+      exitTime: nowIso,
+      dwellDurationSeconds: dwellSeconds,
+      isDiscScanned: entry.isDiscScanned,
+      guardName,
+      siteName: assignedSite?.name || 'Dawie Boerdery - Main Gate'
+    };
+
+    const waUrl = buildVehicleWhatsAppUrl(exitNotification);
+    setLastDispatchedWhatsApp({ url: waUrl, plate: entry.licensePlate, direction: 'out' });
+
+    try {
+      window.open(waUrl, '_blank');
+    } catch {
+      // Handled via user tap button
+    }
+
+    showToast(`✓ Exit recorded: ${entry.licensePlate} · WhatsApp sent to 066 017 9070`);
     void loadVehiclesOnSite();
   };
 
@@ -237,7 +276,38 @@ export default function GuardGatePage() {
       );
     }
 
-    showToast(`${t('vehicleSaved')} (${direction.toUpperCase()} - ${cleanPlate})`);
+    // Auto-dispatch WhatsApp notification to 0660179070 with all scanned car info
+    const vehicleNotification: VehicleNotificationData = {
+      direction,
+      licensePlate: cleanPlate,
+      makeModel: makeModel.trim() || undefined,
+      vehicleColour: vehicleColour.trim() || undefined,
+      vinNumber: discData?.vin,
+      engineNumber: discData?.engineNumber,
+      discExpiryDate: discData?.expiryDate,
+      isDiscExpired: discData?.isExpired,
+      isDiscScanned: !!discData,
+      driverName: driverName.trim() || undefined,
+      driverPhone: driverPhone.trim() || undefined,
+      company: company.trim() || undefined,
+      visitReason: visitReason.trim() || undefined,
+      entryTime: gateRecord.entryTime,
+      exitTime: gateRecord.exitTime,
+      dwellDurationSeconds: dwellDuration,
+      guardName,
+      siteName: assignedSite?.name || 'Dawie Boerdery - Main Gate'
+    };
+
+    const waUrl = buildVehicleWhatsAppUrl(vehicleNotification);
+    setLastDispatchedWhatsApp({ url: waUrl, plate: cleanPlate, direction });
+
+    try {
+      window.open(waUrl, '_blank');
+    } catch {
+      // Handled via user tap button
+    }
+
+    showToast(`${t('vehicleSaved')} (${direction.toUpperCase()} - ${cleanPlate}) · WhatsApp sent to 066 017 9070`);
 
     // Reset Form
     setPlate('');
@@ -288,6 +358,42 @@ export default function GuardGatePage() {
           <ArrowUpRight className="w-5 h-5 text-[#18212B]" />
           <span>{t('vehicleOut')}</span>
         </button>
+      </div>
+
+      {/* Active WhatsApp Dispatch Banner for 0660179070 */}
+      {lastDispatchedWhatsApp && (
+        <div className="p-3.5 rounded-2xl bg-[#25D366]/15 border border-[#25D366]/50 flex items-center justify-between gap-3 shadow-lg animate-in slide-in-from-top-2">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-[#25D366] text-black flex items-center justify-center font-bold shrink-0">
+              <MessageSquareShare className="w-5 h-5 text-black" />
+            </div>
+            <div>
+              <span className="text-xs font-bold text-white block">
+                WhatsApp Dispatch: 066 017 9070
+              </span>
+              <span className="text-[11px] text-[#76C08F] font-mono font-semibold">
+                {lastDispatchedWhatsApp.plate} · {lastDispatchedWhatsApp.direction === 'in' ? 'ENTRY' : 'EXIT'}
+              </span>
+            </div>
+          </div>
+          <a
+            href={lastDispatchedWhatsApp.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-2 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-black font-bold text-xs flex items-center gap-1.5 shadow-md shrink-0 active:scale-95 transition-transform"
+          >
+            <span>Open WhatsApp</span>
+          </a>
+        </div>
+      )}
+
+      {/* Persistent WhatsApp Target Indicator */}
+      <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#18212B] border border-[#324050] text-[11px]">
+        <div className="flex items-center gap-2 text-[#9AA5B1]">
+          <MessageSquareShare className="w-4 h-4 text-[#25D366]" />
+          <span>Auto-dispatch destination:</span>
+        </div>
+        <span className="font-mono font-bold text-[#F0A53A]">066 017 9070</span>
       </div>
 
       {/* Vehicles Currently On Premises (High Visibility Section) */}
@@ -535,6 +641,11 @@ export default function GuardGatePage() {
                 <span className={`font-bold ${discData.isExpired ? 'text-rose-400' : 'text-emerald-400'}`}>
                   {discData.expiryDate || 'N/A'} {discData.isExpired ? '(EXPIRED)' : ''}
                 </span>
+              </div>
+
+              <div className="flex items-center gap-2 p-2 rounded-xl bg-[#25D366]/10 border border-[#25D366]/30 text-[#76C08F] text-[11px]">
+                <MessageSquareShare className="w-4 h-4 text-[#25D366] shrink-0" />
+                <span>Auto-dispatches all scanned car details to WhatsApp <strong>066 017 9070</strong>.</span>
               </div>
             </div>
 
