@@ -1,13 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import Link from 'next/link';
 import { 
   RefreshCw, 
   Globe, 
   FileSpreadsheet, 
-  Download, 
-  ExternalLink 
+  Download 
 } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n/context';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
@@ -165,21 +163,6 @@ export default function GuardMorePage() {
         </Button>
       </Card>
 
-      {/* Portal Links */}
-      <div className="space-y-2 pt-2">
-        <Link href="/supervisor">
-          <div className="p-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-200 flex items-center justify-between">
-            <span>Supervisor Command Portal</span>
-            <ExternalLink className="w-4 h-4 text-[#F0A53A]" />
-          </div>
-        </Link>
-        <Link href="/admin">
-          <div className="p-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-200 flex items-center justify-between">
-            <span>Admin Settings & Checkpoint Generator</span>
-            <ExternalLink className="w-4 h-4 text-emerald-400" />
-          </div>
-        </Link>
-      </div>
     </div>
   );
 }

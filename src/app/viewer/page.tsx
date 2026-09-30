@@ -45,8 +45,21 @@ interface ViewerVehicle {
 
 export default function ClientViewerPortal() {
   const router = useRouter();
-  const { profile, assignedSite, signOut } = useAuth();
+  const { user, roles, isLoading, profile, assignedSite, signOut } = useAuth();
   const supabase = useMemo(() => createClient(), []);
+
+  // Strict role security: Guards are blocked from client viewer portal
+  useEffect(() => {
+    if (isLoading) return;
+    const isGuardMode = typeof window !== 'undefined' && !!localStorage.getItem('eagle_eye_selected_guard');
+    const hasViewerOrAdminRole = roles.some((r) => ['client_viewer', 'admin', 'super_admin', 'supervisor'].includes(r));
+
+    if (isGuardMode || (user && !hasViewerOrAdminRole)) {
+      router.replace('/guard');
+    } else if (!user && !hasViewerOrAdminRole) {
+      router.replace('/login');
+    }
+  }, [isLoading, roles, user, router]);
 
   const [activeTab, setActiveTab] = useState<'summary' | 'patrols' | 'incidents' | 'vehicles'>('summary');
 

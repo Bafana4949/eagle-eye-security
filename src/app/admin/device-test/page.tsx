@@ -54,7 +54,21 @@ interface WebNdefReader {
 
 export default function DeviceHardwareTestPage() {
   const router = useRouter();
-  const { signOut } = useAuth();
+  const { user, roles, isLoading, signOut } = useAuth();
+
+  // Strict role security: Guards are blocked from hardware diagnostic admin tool
+  useEffect(() => {
+    if (isLoading) return;
+    const isGuardMode = typeof window !== 'undefined' && !!localStorage.getItem('eagle_eye_selected_guard');
+    const hasAdminOrSupervisorRole = roles.some((r) => ['admin', 'super_admin', 'supervisor'].includes(r));
+
+    if (isGuardMode || (user && !hasAdminOrSupervisorRole)) {
+      router.replace('/guard');
+    } else if (!user && !hasAdminOrSupervisorRole) {
+      router.replace('/login');
+    }
+  }, [isLoading, roles, user, router]);
+
   const [cameraStatus, setCameraStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
   const [gpsStatus, setGpsStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });
   const [nfcStatus, setNfcStatus] = useState<DiagnosticStatus>({ status: 'pending', details: 'Checking...' });

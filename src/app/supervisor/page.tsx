@@ -71,8 +71,21 @@ interface LiveCheckpoint {
 
 export default function SupervisorDashboardPage() {
   const router = useRouter();
-  const { user, assignedSite, signOut } = useAuth();
+  const { user, roles, isLoading, assignedSite, signOut } = useAuth();
   const supabase = useMemo(() => createClient(), []);
+
+  // Strict role security: Guards are blocked from supervisor portal
+  useEffect(() => {
+    if (isLoading) return;
+    const isGuardMode = typeof window !== 'undefined' && !!localStorage.getItem('eagle_eye_selected_guard');
+    const hasSupervisorRole = roles.some((r) => ['supervisor', 'admin', 'super_admin'].includes(r));
+
+    if (isGuardMode || (user && !hasSupervisorRole)) {
+      router.replace('/guard');
+    } else if (!user && !hasSupervisorRole) {
+      router.replace('/login');
+    }
+  }, [isLoading, roles, user, router]);
 
   const [activeTab, setActiveTab] = useState<'overview' | 'patrols' | 'incidents' | 'gate' | 'map'>('overview');
 

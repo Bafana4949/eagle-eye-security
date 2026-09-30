@@ -41,8 +41,21 @@ interface WebNdefReaderInstance {
 
 export default function AdminPortalPage() {
   const router = useRouter();
-  const { assignedSite, signOut } = useAuth();
+  const { user, roles, isLoading, assignedSite, signOut } = useAuth();
   const supabase = React.useMemo(() => createClient(), []);
+
+  // Strict role security: Guards and non-admins are blocked from admin portal
+  useEffect(() => {
+    if (isLoading) return;
+    const isGuardMode = typeof window !== 'undefined' && !!localStorage.getItem('eagle_eye_selected_guard');
+    const hasAdminRole = roles.some((r) => ['admin', 'super_admin'].includes(r));
+
+    if (isGuardMode || (user && !hasAdminRole)) {
+      router.replace('/guard');
+    } else if (!user && !hasAdminRole) {
+      router.replace('/login');
+    }
+  }, [isLoading, roles, user, router]);
 
   const [activeSection, setActiveSection] = useState<'checkpoints' | 'sites' | 'guards' | 'branding' | 'audit'>('checkpoints');
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
