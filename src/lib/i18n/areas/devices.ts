@@ -11,7 +11,8 @@ export const devicesTranslations = {
     pdevTabsLabel: 'How do you sign in?',
     pdevTabGuard: 'Guard duty',
     pdevTabStaff: 'Admin & supervisor',
-    pdevStaffHint: 'For administrators and supervisors, and for guards who have their own username and password.',
+    pdevStaffHint: 'For administrators and supervisors only. Guards sign in on enrolled patrol phones under Guard duty.',
+    pdevErrGuardNoPassword: 'Guards cannot sign in with a password. Please sign in on an enrolled patrol phone under Guard duty.',
 
     // Guard duty tab
     pdevGuardTitle: 'Who is on duty?',
@@ -139,7 +140,8 @@ export const devicesTranslations = {
     pdevTabsLabel: 'Hoe teken jy aan?',
     pdevTabGuard: 'Wagdiens',
     pdevTabStaff: 'Admin & toesighouer',
-    pdevStaffHint: 'Vir administrateurs en toesighouers, en vir wagte wat hul eie gebruikersnaam en wagwoord het.',
+    pdevStaffHint: 'Slegs vir administrateurs en toesighouers. Wagte teken aan op geregistreerde patrolliefone onder Wagdiens.',
+    pdevErrGuardNoPassword: "Wagters kan nie met 'n wagwoord aanmeld nie. Meld asseblief aan op 'n geregistreerde patrolliefoon onder Wagdiens.",
 
     pdevGuardTitle: 'Wie is aan diens?',
     pdevGuardIntro: 'Tik jou naam om te begin. Geen wagwoord is nodig op hierdie patrolliefoon nie.',
@@ -265,7 +267,8 @@ export const devicesTranslations = {
     pdevTabsLabel: 'Ungena kanjani?',
     pdevTabGuard: 'Umsebenzi wonogada',
     pdevTabStaff: 'Umlawuli nomphathi',
-    pdevStaffHint: 'Okwabalawuli nabaphathi, nakonogada abanegama labo lomsebenzisi nephasiwedi.',
+    pdevStaffHint: 'Okwabalawuli nabaphathi kuphela. Onogada bangena kumafoni okugada abhalisiwe ngaphansi kwe-Umsebenzi wonogada.',
+    pdevErrGuardNoPassword: 'Onogada abakwazi ukungena ngephasiwedi. Sicela ungene efonini yokugada ebhalisiwe ngaphansi komsebenzi wonogada.',
 
     pdevGuardTitle: 'Ubani osemsebenzini?',
     pdevGuardIntro: 'Thepha igama lakho ukuze uqale. Ayidingeki iphasiwedi kule foni yokugada.',

@@ -384,6 +384,15 @@ function LoginScreen() {
       finishHandOver(previousUserId, result.userId, replacedToken);
       const settled = await settleSession(result.userId);
       if (settled.ok) {
+        const canUseStaffTab = settled.state.roles.some((r) =>
+          ['super_admin', 'admin', 'supervisor', 'client_viewer'].includes(r)
+        );
+        if (!canUseStaffTab) {
+          await auth.signOut();
+          setError(t('pdevErrGuardNoPassword'));
+          setPassword('');
+          return;
+        }
         setLeaving(true);
         router.replace(destinationFor(nextParam, settled.state.roles));
         return;
