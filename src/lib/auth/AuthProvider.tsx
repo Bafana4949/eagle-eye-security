@@ -29,6 +29,7 @@ import {
   setCurrentUserPointer,
   writeActiveSiteId
 } from './identity';
+import { PendingSignOut } from './handOver';
 
 export { signIn, loginToEmail } from './signIn';
 export type { AuthState, AuthStatus, SignedOutReason } from './authState';
@@ -49,6 +50,12 @@ export interface AuthContextValue extends AuthState {
    * `force` is set; queued events are NEVER deleted (they sync when this user signs in again).
    */
   signOut(options?: { force?: boolean }): Promise<SignOutResult>;
+  /**
+   * Waits for a sign-out whose server call is still running (it stopped being waited for after
+   * SIGN_OUT_WAIT_MS). Call before creating a new session on this phone: when that call settles,
+   * supabase-js removes whatever session is stored - it must not be the new one.
+   */
+  settlePendingSignOut(): Promise<boolean>;
 }
 
 /**
@@ -73,6 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>(INITIAL_AUTH_STATE);
   const stateRef = useRef<AuthState>(INITIAL_AUTH_STATE);
   const refreshSeq = useRef(0);
+  const [pendingSignOut] = useState(() => new PendingSignOut());
 
   const apply = useCallback((next: AuthState) => {
     stateRef.current = next;
@@ -183,17 +191,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         void serverCall?.then(() => {
           if (!readCurrentCachedUserId(browserStorage())) clearLocalAuthCookies();
         });
+        // When it settles, supabase-js removes the stored session: the next sign-in waits for it.
+        if (serverCall) pendingSignOut.track(serverCall);
       }
       refreshSeq.current += 1;
       apply(signedOutState(null));
       return { ok: true, localOnly };
     },
-    [apply]
+    [apply, pendingSignOut]
   );
 
+  const settlePendingSignOut = useCallback(async (): Promise<boolean> => {
+    return pendingSignOut.settle();
+  }, [pendingSignOut]);
+
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, setActiveSiteId, refresh, signOut }),
-    [state, setActiveSiteId, refresh, signOut]
+    () => ({ ...state, setActiveSiteId, refresh, signOut, settlePendingSignOut }),
+    [state, setActiveSiteId, refresh, signOut, settlePendingSignOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

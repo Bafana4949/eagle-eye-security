@@ -20,9 +20,28 @@ the camera, GPS, PDF417 licence discs, offline/reconnect on a phone and the What
 | `client_viewer` | Read-only, assigned sites; no SOS alerts, no selfies |
 
 Security is enforced in PostgreSQL by Row Level Security policies and triggers, not by the screens.
-Sign-in is real Supabase e-mail/password. Guards type a username; a login without `@` becomes
-`<username>@<NEXT_PUBLIC_GUARD_LOGIN_DOMAIN>` (default `guards.eagleeye.local`). There is no PIN login.
-Accounts are created by an admin (Admin → Staff, server route `/api/admin/users`); nobody can sign up alone.
+Sign-in is real Supabase Auth; there is no PIN login and no shared password. Accounts are created by an admin
+(Admin → Staff, server route `/api/admin/users`); nobody can sign up alone.
+
+**Guard sign-in model.** Admins and supervisors always sign in with e-mail + password (the **Admin & supervisor**
+tab). Guards work at night, in rain and with gloves on **shared patrol phones**, so on an *enrolled* patrol phone
+they tap their name on the **Guard duty** tab instead of typing anything. A supervisor of the site (or an org
+admin), signed in on the phone, enrols it for one site under **Patrol phones** (admin: **Phones** tab; supervisor:
+dashboard **Overview**, at the bottom) and is signed out on that phone straight afterwards. The phone keeps a
+random device secret and the database stores only its SHA-256
+(`supabase/migrations/20261001000200_patrol_devices.sql`). Only a request carrying a valid, non-revoked secret
+gets that site's list of active guards (names only) and a normal Supabase session for one of them, issued by the
+server routes `/api/auth/device-roster` and `/api/auth/device-login` with the service-role key (the e-mail never
+comes from or goes to the phone). Only accounts whose sole role is `guard` are listed and signed in this way. A
+phone is revoked automatically when the person who enrolled it can no longer manage the site (deactivated,
+unassigned, role removed, deleted) or the site is switched off. Any other phone shows no names:
+guards there sign in with a username (a login without `@` becomes
+`<username>@<NEXT_PUBLIC_GUARD_LOGIN_DOMAIN>`, default `guards.eagleeye.local`) and password. The live selfie
+and GPS position at clock-in are **attendance evidence** for supervisors to review, not identity verification
+(there is no face recognition). Enrolments, revocations (also the automatic ones) and every approved
+patrol-phone sign-in request are audited; a lost patrol phone is revoked from Patrol phones on any other device (see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) Step 3b). Guards can never open `/admin` or `/supervisor`
+(`src/proxy.ts` + RLS).
 
 ## How key features work
 
@@ -62,7 +81,8 @@ NEXT_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
 # optional
 NEXT_PUBLIC_GUARD_LOGIN_DOMAIN=guards.eagleeye.local
-# only needed to create staff from the Admin screen locally; server-only, never NEXT_PUBLIC_
+# needed to create staff from the Admin screen and for patrol-phone guard sign-in
+# (/api/auth/device-roster, /api/auth/device-login); server-only, never NEXT_PUBLIC_
 SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
 ```
 
@@ -87,7 +107,7 @@ None of these replace testing on a real phone.
 ## Documentation
 
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) – deploying to Supabase + Vercel, including the required security
-  steps for the live project (key rotation, migration, test accounts)
+  steps for the live project (key rotation, migrations, test accounts) and enrolling patrol phones
 - [docs/FIELD_TEST_CHECKLIST.md](docs/FIELD_TEST_CHECKLIST.md) – step-by-step test on a Samsung Android phone
 - [docs/THEME.md](docs/THEME.md) – colour tokens and fonts
 - Older manuals in `docs/` (user, supervisor, admin, hardware, demo) have not been re-checked against this

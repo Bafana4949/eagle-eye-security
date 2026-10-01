@@ -48,7 +48,8 @@ describe('migration files', () => {
     assert.deepEqual(names, [
       '20260930000000_init_schema.sql',
       '20260930000100_phase2_hardening.sql',
-      HARDENING
+      HARDENING,
+      '20261001000200_patrol_devices.sql'
     ]);
   });
 
@@ -86,7 +87,7 @@ describe('applying migrations', () => {
       db,
       `SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'public'`
     );
-    assert.equal(r.rows[0].n, 15);
+    assert.equal(r.rows[0].n, 16);
     const fn = await asSuperuser<{ n: number }>(
       db,
       `SELECT count(*)::int AS n FROM pg_proc WHERE proname IN ('is_site_member', 'can_manage_site', 'try_uuid')`
@@ -247,7 +248,7 @@ describe('anon (not signed in) has no access', () => {
       db,
       `SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY 1`
     );
-    assert.equal(tables.rows.length, 15);
+    assert.equal(tables.rows.length, 16);
     for (const { tablename } of tables.rows) {
       const priv = await asSuperuser<{ any: boolean }>(
         db,

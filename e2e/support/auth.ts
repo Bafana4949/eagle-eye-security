@@ -14,6 +14,7 @@ import { expect, type BrowserContext, type Locator, type Page } from '@playwrigh
 import { APP_URL, AUTH_COOKIE_NAME, FAKE_SUPABASE_URL, TEST_ANON_KEY } from '../../tests/e2e-support/constants';
 import type { E2ERole, E2EUser } from '../../tests/e2e-support/fixture';
 import { retryFetch } from '../../tests/e2e-support/netRetry';
+import { loginTabs } from './devices';
 
 export interface LoginForm {
   username: Locator;
@@ -32,6 +33,21 @@ export function loginForm(page: Page): LoginForm {
     // The error live region (empty until something goes wrong).
     error: page.getByTestId('auth-login-error').or(page.locator('[role="alert"][aria-live="assertive"]')).first()
   };
+}
+
+/**
+ * Makes the e-mail / password form visible. /login has two tabs ("Guard duty" for enrolled
+ * patrol phones, "Admin & supervisor" with the password form); this opens the password tab when
+ * it is not the one shown. A login page without tabs is left as it is.
+ */
+export async function showPasswordForm(page: Page): Promise<LoginForm> {
+  const form = loginForm(page);
+  const { adminTab } = loginTabs(page);
+  await expect(async () => {
+    if (!(await form.username.isVisible()) && (await adminTab.isVisible())) await adminTab.click();
+    await expect(form.username).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 30_000 });
+  return form;
 }
 
 /** Home route for a set of roles (mirrors src/lib/auth/routeAccess homeForRoles). */
@@ -59,7 +75,7 @@ export async function login(
 ): Promise<void> {
   const target = options.next ? `/login?next=${encodeURIComponent(options.next)}` : '/login';
   await page.goto(target);
-  const form = loginForm(page);
+  const form = await showPasswordForm(page);
   await form.username.fill(user.login);
   await form.password.fill(options.password ?? user.password);
   await form.submit.click();

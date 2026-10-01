@@ -20,9 +20,10 @@ Chrome version (Chrome → ⋮ → Settings → About Chrome): ____________ App 
 2. **Accounts** (created by an admin in Admin → Staff; nobody signs up alone):
    - 1 admin (e-mail login)
    - 1 supervisor, assigned to the test site
-   - 2 guards, both assigned to the test site (guard A and guard B; guard B is needed for TEST 20).
-     Guards sign in with a short username such as `wag1`; the app turns it into
-     `wag1@<guard login domain>` (default `guards.eagleeye.local`). There is no PIN login.
+   - 2 guards, both assigned to the test site (guard A and guard B; guard B is needed for TESTS 20, 22–24).
+     On a phone that is **not** an enrolled patrol phone, guards sign in with a short username such as `wag1`;
+     the app turns it into `wag1@<guard login domain>` (default `guards.eagleeye.local`). On an **enrolled
+     patrol phone** (TEST 22) they tap their name instead – no username, no password. There is no PIN login.
    - 1 client viewer, assigned to the test site
 3. **One test site** (Admin → Sites) with: name and code, map position, default radius, day/night shift times,
    round interval, **WhatsApp number** (a South African mobile you can see, e.g. your second phone),
@@ -36,7 +37,11 @@ Chrome version (Chrome → ⋮ → Settings → About Chrome): ____________ App 
    watch live updates.
 7. **Supabase Dashboard access** (Table Editor + Storage) to check what reached the server.
 8. **Physical items:** Dawie's NFC tag(s); one spare NFC tag that is **not** registered; a vehicle with a
-   South African licence disc; a torch; a printed QR checkpoint card.
+   South African licence disc; a torch; a printed QR checkpoint card; the **patrol gloves** the guards wear at
+   night (TEST 23).
+9. **Patrol phones (TESTS 22–26):** the migration `20261001000200_patrol_devices.sql` is applied (DEPLOYMENT
+   Step 1b) and `SUPABASE_SERVICE_ROLE_KEY` is set on the server. You need the test phone (it becomes the patrol
+   phone) and a **second phone** – or a Chrome **Incognito** tab – that was never enrolled (TEST 25).
 
 **NFC tips for Samsung:** the NFC antenna is on the back, roughly in the middle. Hold the tag flat against the
 back of the phone and keep it still for 1–2 seconds. If Android shows its own "tag scanned / no app" pop-up,
@@ -591,6 +596,230 @@ version; records saved on the phone are kept (pending count unchanged) and you s
 
 ---
 
+### TEST 22 – Enrol patrol phone
+
+**Preconditions:** "Before you start" item 9 done. The supervisor is assigned to the test site; guard A and
+guard B are active and assigned to it. Online. Nobody signed in on the test phone.
+
+**Steps:**
+1. Open the app. On the sign-in page tap the **Admin & supervisor** tab and sign in with the supervisor's
+   e-mail and password.
+2. On the supervisor dashboard (**Overview** tab) scroll to the bottom: **Patrol phones**.
+3. Tap **Enrol this phone as a patrol phone**, pick the test site, type the label `Test gate phone`, tap
+   **Enrol this phone**. Read the confirmation, then tap **Enrol and sign out**.
+4. Look at the screen the phone shows next.
+5. On a second device, sign in as the supervisor and open **Patrol phones**.
+
+**Expected result:** Step 3: the form only opens after the first tap and warns that anyone holding the phone can
+sign in as any guard of the site and that personal phones must not be enrolled; the confirmation says the same.
+Step 4: the supervisor is signed out at once; the **Guard duty** tab says "This phone is now a patrol phone for
+<site>. You have been signed out: hand the phone to the guards.", shows the site name, the label `Test gate
+phone` and one large, full-width button per guard: guard A, guard B and any other **active guard assigned to this
+site** – no supervisor, admin, client viewer, disabled guard or guard of another site. On a small phone the first
+name is visible without scrolling. No phone numbers or e-mail addresses are shown. Step 5: the list shows `Test
+gate phone` with the site, enrolled by the supervisor, enrolled just now, never used, not revoked (no **This
+phone** badge on the second device).
+
+**Where to verify in Supabase:** `patrol_devices` – one new row: `site_id` = test site, `label` =
+`Test gate phone`, `enrolled_by` = supervisor's id, `revoked_at` empty, `secret_sha256` = 64 hex characters
+(only a hash; the phone's secret is not stored anywhere in the database). `audit_logs` – action
+`patrol_device.enrolled`, actor = supervisor, details with `device_id`, `site_id`, `label` and nothing else.
+
+**Actual result:** ____________________________________________________________
+
+**PASS / FAIL:** ☐ PASS ☐ FAIL
+
+**Notes:** ____________________________________________________________
+
+---
+
+### TEST 23 – One-tap guard sign-in on the patrol phone (gloves)
+
+**Preconditions:** TEST 22 done; nobody signed in on the patrol phone; guard A not on duty. Put on the
+**patrol gloves**. If possible do this outside at night or in a dark room (torch off), and once with wet gloves.
+
+**Steps:**
+1. Open the app. If the **Guard duty** tab is not already showing, tap it.
+2. With gloves on, tap **guard A's** name once. Note how many taps it took and any wrong name hit.
+3. Wait for the guard home screen. Note the time from tap to guard home. Read the box at the top and tap
+   **Yes, that's me**.
+3a. Mis-tap: sign out (More → Sign out), tap **guard B's** name on purpose, then on the guard home tap
+   **Not you? Switch guard** and tap guard A's name. Check that guard A is now signed in.
+4. Clock in (as in TEST 3): selfie + GPS.
+5. In Chrome (not the installed app) type `/supervisor` and then `/admin` after the app address.
+6. Clock out guard A and sign out.
+7. Turn on **airplane mode**, open the **Guard duty** tab and tap guard A's name. Turn airplane mode off again.
+
+**Expected result:** Step 2–3: one tap signs guard A in and opens the guard home within a few seconds; no
+e-mail, username or password is asked for. The buttons are big enough to hit with gloves on the first try. The
+guard home shows "Signed in as <guard A>" with **Yes, that's me** / **Not you? Switch guard** (for one minute).
+Step 3a: **Not you?** goes back to the guard list; tapping guard A signs guard A in (guard B is signed out on this
+phone without any extra step).
+Step 4: clock-in works as in TEST 3 (the selfie and GPS are the attendance evidence the supervisor reviews;
+the app does **not** claim to recognise the face). Step 5: both addresses send guard A back to `/guard`.
+Step 7: the app says clearly that there is no connection (whether or not the names are still on the screen);
+nobody is signed in and the app does not pretend it worked.
+
+**Where to verify in Supabase:** `patrol_devices` – `last_used_at` = time of step 2, `last_guard_id` = guard A's
+id. `audit_logs` – action `patrol_device.guard_signed_in`, actor = guard A, details `device_id` + `site_id`.
+`shifts` – guard A's new shift with `start_selfie_url` and start GPS. Authentication → Users → guard A: "Last
+signed in" updated. No `patrol_device.guard_signed_in` row for step 7.
+
+**Actual result:** ____________________________________________________________
+
+**PASS / FAIL:** ☐ PASS ☐ FAIL
+
+**Notes:** ____________________________________________________________
+
+---
+
+### TEST 24 – Guard switch on a shared phone with queued records
+
+**Preconditions:** TEST 23 done. On the patrol phone, guard A is signed in (tap the name again) and clocked in.
+Guard B is assigned to the site. Online.
+
+**Steps:**
+1. Guard A: turn on **airplane mode**. Scan a checkpoint and save an incident (the pending count shows 2).
+2. Still offline, sign guard A out (More → Sign out). Read the warning and tap **Sign out anyway**.
+3. Turn airplane mode **off**. Look at the **Guard duty** list, then tap **guard B**.
+4. Guard B: open the sync details. Wait 2 minutes.
+5. Sign guard B out and tap **guard A** again. Wait for the sync. Clock guard A out.
+
+**Expected result:** Step 2: one "Before you sign out" box lists: no signal (nobody can sign in on this phone and
+there is no SOS button until there is signal), guard A clocked in since <time>, and 2 records not uploaded that
+stay on this phone and upload only when guard A signs in on this phone again within 7 days. **Stay signed in** is
+the highlighted default; after **Sign out anyway** guard A is signed out. Step 3: guard A's button shows
+"2 record(s) waiting to upload", and a box below the list gives the total; one tap signs in guard B. Step 4: guard
+B's pending count is 0, the details mention records from **another account** on this phone; none of guard A's
+records upload while B is signed in and B cannot see them in history. Step 5: guard A's 2 records upload under
+guard A (pending count back to 0, the "waiting" line disappears), nothing is lost or duplicated.
+
+**Where to verify in Supabase:** after step 4: **no** new `patrol_scans` / `incidents` rows from step 1. After
+step 5: those rows exist once each with `guard_id` = guard A. `audit_logs` – three new
+`patrol_device.guard_signed_in` rows for this phone (guard A, guard B, guard A), each with that guard as actor.
+
+**Actual result:** ____________________________________________________________
+
+**PASS / FAIL:** ☐ PASS ☐ FAIL
+
+**Notes:** ____________________________________________________________
+
+---
+
+### TEST 25 – Non-enrolled phone shows no roster
+
+**Preconditions:** A second phone that was **never** enrolled, or a Chrome **Incognito** tab (it has no stored
+enrolment). The patrol phone from TEST 22 stays enrolled. Optional step 4 needs a laptop with `curl`.
+
+**Steps:**
+1. Open the app address on the non-enrolled phone / Incognito tab and open the **Guard duty** tab.
+2. Look for any site name or guard name.
+3. Follow the link to username / password sign-in and sign in as guard A with username + password. Sign out.
+4. Optional (technical tester, laptop):
+
+   ```bash
+   curl -i -X POST https://<your-domain>/api/auth/device-roster -H "content-type: application/json" \
+     -d '{"deviceSecret":"EED-0000000000000000000000000000000000000000000000000000000000000000"}'
+   curl -i -X POST https://<your-domain>/api/auth/device-login -H "content-type: application/json" \
+     -d '{"deviceSecret":"EED-0000000000000000000000000000000000000000000000000000000000000000","guardId":"<guard A id>"}'
+   curl -i -X POST https://<your-domain>/api/auth/device-login -H "content-type: application/json" \
+     -d '{"deviceSecret":"EED-0000000000000000000000000000000000000000000000000000000000000000","guardId":"<guard A id>","email":"<guard A e-mail>"}'
+   ```
+
+**Expected result:** Steps 1–2: **no** site and **no** names – only "This phone is not set up for guard duty – a
+supervisor must sign in and enrol it" and a link to sign in with username / password. Step 3: password sign-in
+works as before. Step 4: first two calls → `401` with `device_not_enrolled`, third → `400` `invalid_request`
+(an `email` field is refused). No response contains a guard name, an e-mail address or a token.
+
+**Where to verify in Supabase:** `patrol_devices` unchanged (no new row, `last_used_at` of the patrol phone not
+changed). `audit_logs` – no `patrol_device.guard_signed_in` row from this test.
+
+**Actual result:** ____________________________________________________________
+
+**PASS / FAIL:** ☐ PASS ☐ FAIL
+
+**Notes:** ____________________________________________________________
+
+---
+
+### TEST 26 – Revoke a patrol phone
+
+**Preconditions:** The patrol phone from TEST 22 is enrolled and shows the guard list on **Guard duty**, nobody
+signed in on it. The supervisor (or admin) is signed in on a **second device** (laptop or phone).
+
+**Steps:**
+1. Second device: **Patrol phones** → `Test gate phone` → **Revoke** → confirm.
+2. Patrol phone: if the names are still on the screen, tap guard A.
+3. Patrol phone: close and reopen the app, open **Guard duty**.
+4. Re-enrol: on the patrol phone sign in as the supervisor (**Admin & supervisor** tab), **Patrol phones** →
+   **Enrol this phone as a patrol phone** with the label `Test gate phone 2` → **Enrol and sign out**.
+
+**Expected result:** Step 1: the list shows `Test gate phone` as revoked (with the time); the button asks for
+confirmation first. Step 2: nobody is signed in; the app says the phone is not set up for guard duty (it removes
+its old enrolment). Step 3: no names, the same explanation as in TEST 25. Step 4: the phone is a patrol phone
+again under the new label (the supervisor is signed out automatically); the old entry stays revoked. (Revoking
+stops **new** sign-ins; a guard who was already signed in on a revoked phone stays signed in until signing out –
+for a lost phone ask an admin to deactivate that guard in Admin → Staff, see DEPLOYMENT Step 3b.)
+
+**Where to verify in Supabase:** `patrol_devices` – the first row has `revoked_at` set and `revoked_by` = the
+supervisor's id; a second row for `Test gate phone 2`. `audit_logs` – `patrol_device.revoked` (actor =
+supervisor) and a second `patrol_device.enrolled`; no `patrol_device.guard_signed_in` for the revoked phone
+after step 1.
+
+**Actual result:** ____________________________________________________________
+
+**PASS / FAIL:** ☐ PASS ☐ FAIL
+
+**Notes:** ____________________________________________________________
+
+---
+
+### TEST 27 – No signal at shift change
+
+**Preconditions:** Patrol phone enrolled; guard A signed in on it (not clocked in, nothing waiting). Guard B present.
+
+**Steps:**
+1. Turn on **airplane mode**. Guard A: More → **Sign out**. Read the box.
+2. Tap **Stay signed in**. Hold the **SOS** button for 2 seconds, then cancel / resolve it as in TEST 14.
+3. Go to where there is signal (or turn airplane mode off). Guard A signs out; guard B taps their name.
+
+**Expected result:** Step 1: the box says there is no signal, that after signing out nobody can sign in on this
+phone and the SOS button is not available until there is signal; **Stay signed in** is the highlighted default.
+Step 2: guard A is still signed in and SOS works (queued offline as in TEST 14). Step 3: the hand-over works
+normally.
+
+**Actual result:** ____________________________________________________________
+
+**PASS / FAIL:** ☐ PASS ☐ FAIL
+
+**Notes:** ____________________________________________________________
+
+---
+
+### TEST 28 – A manager on a patrol phone; a wrong password does not sign the guard out
+
+**Preconditions:** Patrol phone enrolled, nobody signed in. Supervisor's e-mail and password.
+
+**Steps:**
+1. On the patrol phone, **Admin & supervisor** tab: sign in as the supervisor. Look at the top of the dashboard.
+2. Open the sign-in page again (`/login` after the app address). Look at the box at the top.
+3. Tap **Sign out** in that box. Guard A taps their name.
+4. Guard A: open `/login` again, tap **Admin & supervisor**, type the supervisor's e-mail and a **wrong** password.
+5. Optional: sign in as the supervisor again and leave the phone untouched for 10 minutes.
+
+**Expected result:** Step 1: a red "This is a patrol phone" banner. Step 2: "Signed in on this phone: <supervisor>"
+with a warning and only **Sign out** – no "Continue as". Step 3: signed out; guard A signs in as usual. Step 4:
+"wrong username or password"; guard A **stays signed in** (the box still shows guard A). Step 5: after 10 minutes
+the phone is back on the sign-in page, signed out.
+
+**Actual result:** ____________________________________________________________
+
+**PASS / FAIL:** ☐ PASS ☐ FAIL
+
+**Notes:** ____________________________________________________________
+
+---
+
 ## Summary
 
 | Test | PASS | FAIL | Short note |
@@ -616,6 +845,18 @@ version; records saved on the phone are kept (pending count unchanged) and you s
 | 19 WhatsApp summary | ☐ | ☐ | |
 | 20 Second guard | ☐ | ☐ | |
 | 21 App update | ☐ | ☐ | |
+| 22 Enrol patrol phone | ☐ | ☐ | |
+| 23 One-tap guard sign-in (gloves) | ☐ | ☐ | |
+| 24 Guard switch with queued records | ☐ | ☐ | |
+| 25 Non-enrolled phone: no roster | ☐ | ☐ | |
+| 26 Revoke patrol phone | ☐ | ☐ | |
+| 27 No signal at shift change | ☐ | ☐ | |
+| 28 Manager on a patrol phone / wrong password | ☐ | ☐ | |
+
+**Patrol phones:** an enrolled patrol phone is a shared key to its site's guard accounts – whoever holds it can
+sign in as any guard on its list. A tap on a name is not identity verification; the clock-in selfie and GPS are
+attendance evidence for the supervisor to review (there is no face recognition). Keep patrol phones on site and
+revoke a lost one immediately.
 
 **Security notes for testers:** NFC tag serials are identifiers, not secrets – a tag can be cloned. A cloned
 serial still cannot get past sign-in, site assignment, the active shift, the checkpoint–site match, the

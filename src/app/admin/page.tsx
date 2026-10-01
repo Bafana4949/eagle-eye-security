@@ -6,7 +6,7 @@
  * sample data. See src/components/admin/* for the panels.
  */
 import React, { useEffect, useState } from 'react';
-import { Building2, QrCode, ScrollText, Users } from 'lucide-react';
+import { Building2, QrCode, ScrollText, Smartphone, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { useTranslation } from '@/lib/i18n/context';
@@ -20,15 +20,17 @@ import { SitesPanel } from '@/components/admin/SitesPanel';
 import { StaffPanel, type SitesStatus } from '@/components/admin/StaffPanel';
 import { loadOrgSites, type AdminError } from '@/components/admin/adminData';
 import { withDb } from '@/components/admin/withDb';
+import { PatrolDevicesPanel } from '@/components/devices/PatrolDevicesPanel';
 import { ErrorNotice, Notice, inputClass } from '@/components/admin/ui';
 
-type Tab = 'sites' | 'checkpoints' | 'staff' | 'audit';
+type Tab = 'sites' | 'checkpoints' | 'staff' | 'audit' | 'devices';
 
 const TABS: ReadonlyArray<{ id: Tab; label: TranslationKey; icon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }> }> = [
   { id: 'sites', label: 'admTabSites', icon: Building2 },
   { id: 'checkpoints', label: 'admTabCheckpoints', icon: QrCode },
   { id: 'staff', label: 'admTabStaff', icon: Users },
-  { id: 'audit', label: 'admTabAudit', icon: ScrollText }
+  { id: 'audit', label: 'admTabAudit', icon: ScrollText },
+  { id: 'devices', label: 'pdevAdminTab', icon: Smartphone }
 ];
 
 type SitesState = { token: number; sites: Site[] } | { token: number; error: AdminError };
@@ -118,7 +120,7 @@ export default function AdminConsolePage() {
             </Notice>
           )}
 
-          <div role="tablist" aria-label={t('admConsoleTitle')} className="grid grid-cols-4 gap-1 rounded-2xl border border-ee-border bg-ee-surface p-1" onKeyDown={onTabKeyDown}>
+          <div role="tablist" aria-label={t('admConsoleTitle')} className="grid grid-cols-3 gap-1 rounded-2xl border border-ee-border bg-ee-surface p-1 sm:grid-cols-5" onKeyDown={onTabKeyDown}>
             {TABS.map((item) => {
               const Icon = item.icon;
               const selected = tab === item.id;
@@ -147,7 +149,7 @@ export default function AdminConsolePage() {
           <div id={`admin-tabpanel-${tab}`} role="tabpanel" aria-labelledby={`admin-tab-${tab}`} className="space-y-4">
             {!organisationId || !userId ? (
               <Notice tone="danger">{t('admNoProfile')}</Notice>
-            ) : tab === 'staff' || tab === 'audit' ? null : !current ? (
+            ) : tab === 'staff' || tab === 'audit' || tab === 'devices' ? null : !current ? (
               <p className="text-sm text-ee-muted" role="status" data-testid="admin-sites-loading">
                 {t('admLoading')}
               </p>
@@ -188,6 +190,7 @@ export default function AdminConsolePage() {
 
             {organisationId && userId && tab === 'staff' && <StaffPanel sites={sites} sitesStatus={sitesStatus} currentUserId={userId} callerIsSuperAdmin={isSuperAdmin} />}
             {organisationId && userId && tab === 'audit' && <AuditPanel sites={sites} />}
+            {organisationId && userId && tab === 'devices' && <PatrolDevicesPanel />}
           </div>
 
           <AdminFooter page="console" />

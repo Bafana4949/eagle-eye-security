@@ -331,7 +331,8 @@ export class PostgrestHandler {
     }
     const payload = nullsStripped && result.body !== undefined && result.body !== null ? stripNulls(result.body) : result.body;
     if (result.status === 204 || payload === undefined) return send(req, res, result.status, null, result.headers);
-    return send(req, res, result.status, payload, {
+    // A scalar function that returned NULL: PostgREST answers the JSON literal `null`.
+    return send(req, res, result.status, payload === null ? 'null' : payload, {
       'Content-Type': wantsObject ? 'application/vnd.pgrst.object+json; charset=utf-8' : 'application/json; charset=utf-8',
       ...result.headers
     });

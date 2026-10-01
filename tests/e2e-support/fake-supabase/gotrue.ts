@@ -5,8 +5,12 @@
  *   POST /auth/v1/token?grant_type=password | refresh_token | pkce
  *   GET  /auth/v1/user            PUT /auth/v1/user
  *   POST /auth/v1/logout?scope=   POST /auth/v1/recover   GET /auth/v1/health | /settings
- *   POST /auth/v1/verify          (type recovery + token_hash, i.e. verifyOtp from a reset link)
+ *   POST /auth/v1/verify          (token_hash + type recovery, i.e. verifyOtp from a reset link;
+ *                                  token_hash + type magiclink | email, i.e. verifyOtp of an
+ *                                  admin-generated magic link: single-use, short expiry)
  *   /auth/v1/admin/users[/:id]    (service_role only: create / list / get / update / delete)
+ *   POST /auth/v1/admin/generate_link (service_role only; type magiclink for an EXISTING user;
+ *                                  nothing is mailed, the caller receives hashed_token)
  *
  * Error bodies follow GoTrue (API version 2024-01-01): { code, error_code, msg } with the same
  * HTTP statuses, so auth-js raises the same AuthApiError codes (invalid_credentials,
@@ -241,6 +245,77 @@ async function applyUserUpdate(state: FakeSupabaseState, user: AuthUser, body: R
   user.updatedAt = new Date().toISOString();
 }
 
+const LINK_INVALID = (): HttpError => authError(403, 'otp_expired', 'Email link is invalid or has expired');
+
+/**
+ * POST /auth/v1/admin/generate_link (caller already checked: service role). Only `magiclink` for
+ * an existing account is emulated — the app mints a link for a guard whose e-mail it read from
+ * auth.users, never for an address a client typed. (GoTrue would sign an unknown address up; the
+ * fake answers 404 user_not_found instead so such a bug fails loudly.) Nothing is "mailed".
+ * Response shape = GoTrue's: the user object plus action_link / email_otp / hashed_token /
+ * redirect_to / verification_type at the top level (auth-js moves them into data.properties).
+ */
+function generateLink(state: FakeSupabaseState, url: URL, input: Record<string, unknown>): Record<string, unknown> {
+  if (input.type !== 'magiclink') {
+    const known = ['signup', 'invite', 'recovery', 'email_change_current', 'email_change_new'];
+    throw authError(
+      400,
+      'validation_failed',
+      known.includes(String(input.type))
+        ? `generate_link type "${String(input.type)}" is not supported by the E2E fake (only "magiclink")`
+        : 'Invalid email action link type requested'
+    );
+  }
+  const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
+  if (!EMAIL.test(email)) throw authError(400, 'validation_failed', 'Unable to validate email address: invalid format');
+  const user = state.userByEmail(email);
+  if (!user) throw authError(404, 'user_not_found', 'User not found');
+  const redirectTo = url.searchParams.get('redirect_to') ?? (typeof input.redirect_to === 'string' ? input.redirect_to : null);
+  const link = state.newMagicLink(user, redirectTo);
+  const redirect = redirectTo ?? state.baseUrl;
+  const actionLink = new URL(`${state.baseUrl}/auth/v1/verify`);
+  actionLink.searchParams.set('token', link.tokenHash);
+  actionLink.searchParams.set('type', 'magiclink');
+  actionLink.searchParams.set('redirect_to', redirect);
+  return {
+    ...userJson(user),
+    action_link: actionLink.toString(),
+    email_otp: link.emailOtp,
+    hashed_token: link.tokenHash,
+    redirect_to: redirect,
+    verification_type: 'magiclink'
+  };
+}
+
+/**
+ * verifyOtp({ token_hash, type: 'magiclink' | 'email' }) for a link minted by generate_link:
+ * valid once, only the newest link of the user, only before it expires, only while the account
+ * still has the e-mail it was minted for. Verifying confirms the e-mail (as GoTrue does).
+ */
+function verifyMagicLink(
+  state: FakeSupabaseState,
+  input: Record<string, unknown>
+): { user: AuthUser; session: SessionRecord; refreshToken: string } {
+  const tokenHash = typeof input.token_hash === 'string' ? input.token_hash.trim() : '';
+  if (!tokenHash) {
+    if (input.token !== undefined || input.email !== undefined) {
+      throw authError(400, 'validation_failed', 'The E2E fake verifies e-mail links by token_hash only (not e-mail + OTP)');
+    }
+    throw authError(400, 'validation_failed', 'Verify requires a token or a token hash');
+  }
+  const link = state.magicLinks.find((candidate) => candidate.tokenHash === tokenHash);
+  if (!link || link.usedAt !== null || link.supersededAt !== null || state.magicLinkExpired(link)) throw LINK_INVALID();
+  const user = state.users.get(link.userId);
+  if (!user || user.email !== link.email) throw LINK_INVALID();
+  if (isBanned(user)) throw authError(400, 'user_banned', 'User is banned');
+  link.usedAt = Date.now();
+  const now = new Date().toISOString();
+  if (!user.emailConfirmedAt) user.emailConfirmedAt = now;
+  user.lastSignInAt = now;
+  const { session, refreshToken } = state.newSession(user.id, input.type === 'email' ? 'otp' : 'magiclink');
+  return { user, session, refreshToken };
+}
+
 export async function handleAuth(
   state: FakeSupabaseState,
   req: IncomingMessage,
@@ -361,8 +436,16 @@ export async function handleAuth(
   // Token-hash links ({{ .SiteURL }}/auth/reset?token_hash=...&type=recovery → verifyOtp).
   if (subpath === 'verify' && method === 'POST') {
     const input = bodyObject(body);
+    if (input.type === 'magiclink' || input.type === 'email') {
+      const { user, session, refreshToken } = verifyMagicLink(state, input);
+      return ok(200, sessionJson(state, user, session, refreshToken));
+    }
     if (input.type !== 'recovery') {
-      throw authError(400, 'validation_failed', `Only type "recovery" is supported by the E2E fake (got "${String(input.type)}")`);
+      throw authError(
+        400,
+        'validation_failed',
+        `Only types "recovery", "magiclink" and "email" are supported by the E2E fake (got "${String(input.type)}")`
+      );
     }
     const tokenHash = typeof input.token_hash === 'string' ? input.token_hash : '';
     const flow = tokenHash ? state.recoveries.find((candidate) => candidate.tokenHash === tokenHash) : undefined;
@@ -380,6 +463,12 @@ export async function handleAuth(
 
   if (subpath === 'signup' && method === 'POST') throw authError(422, 'signup_disabled', 'Signups not allowed for this instance');
   if ((subpath === 'otp' || subpath === 'magiclink') && method === 'POST') throw authError(422, 'otp_disabled', 'Signups not allowed for otp');
+
+  if (subpath === 'admin/generate_link') {
+    requireServiceRole(req);
+    if (method !== 'POST') throw authError(405, 'method_not_allowed', `${method} is not allowed on /admin/generate_link`);
+    return ok(200, generateLink(state, url, bodyObject(body)));
+  }
 
   const admin = /^admin\/users(?:\/([^/]+))?$/.exec(subpath);
   if (admin) {
@@ -478,4 +567,26 @@ export function recoveryLinks(state: FakeSupabaseState): RecoveryLink[] {
       used: flow.used
     };
   });
+}
+
+export interface MagicLinkSummary {
+  userId: string;
+  email: string;
+  createdAt: string;
+  used: boolean;
+  superseded: boolean;
+  expired: boolean;
+}
+
+/** Magic links minted through admin generate_link (no token material: specs only assert state). */
+export function magicLinkSummaries(state: FakeSupabaseState): MagicLinkSummary[] {
+  const now = Date.now();
+  return state.magicLinks.map((link) => ({
+    userId: link.userId,
+    email: link.email,
+    createdAt: new Date(link.createdAt).toISOString(),
+    used: link.usedAt !== null,
+    superseded: link.supersededAt !== null,
+    expired: state.magicLinkExpired(link, now)
+  }));
 }

@@ -8,6 +8,7 @@ import { HeaderBar, SiteChoiceList, useActiveShiftRecord } from '@/components/gu
 import { BottomNav } from '@/components/guard/BottomNav';
 import { SosPanicModal } from '@/components/guard/SosPanicModal';
 import { SignOutControl, SyncStatusButton } from '@/components/shared/HeaderNav';
+import { DeviceSignInCheck } from '@/components/devices/DeviceSignInCheck';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { browserStorage, readActiveSiteId } from '@/lib/auth/identity';
 import { useTranslation } from '@/lib/i18n/context';
@@ -115,6 +116,7 @@ function GuardShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-dvh flex-col bg-ee-bg text-ee-text">
       <HeaderBar siteLocked={!!activeShift} />
       <main className="mx-auto w-full max-w-md flex-1 px-4 pt-4 pb-[calc(9rem+env(safe-area-inset-bottom))]">
+        <DeviceSignInCheck />
         {children}
       </main>
       <SosPanicModal />

@@ -1,20 +1,57 @@
 'use client';
 
+/**
+ * Sign-in. Two tabs:
+ * - "Guard duty": on a patrol phone (enrolled by a supervisor / admin for one site, see
+ *   src/lib/auth/patrolDevice.ts) guards tap their name — no e-mail, no password. The phone's
+ *   device secret is the only credential; the server decides who may sign in. On any other phone
+ *   the tab explains that it must be enrolled first.
+ * - "Admin & supervisor": username / e-mail + password (+ forgot password). Guards who have their
+ *   own login may use it too.
+ * The guard tab is the default on an enrolled phone. On a shared patrol phone somebody may still be
+ * signed in. Hand-over rule (src/lib/auth/handOver.ts): the NEXT person's session is created first
+ * (password checked / guard tap accepted); only then is the previous person forgotten on this phone
+ * and their old session ended on the server. A wrong password or a refused tap leaves whoever was
+ * signed in untouched. Their queued records stay on the phone and upload when they sign in on this
+ * phone again (within 7 days) - the roster shows how many are waiting per guard.
+ * A supervisor / admin left signed in on a patrol phone is never offered "Continue as": only
+ * "Sign out" (guards must never reach /admin or /supervisor through a patrol phone).
+ */
 import React, { Suspense, useEffect, useId, useRef, useState } from 'react';
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, Eye, EyeOff, Info, Loader2, LogIn } from 'lucide-react';
+import { AlertCircle, Clock, Eye, EyeOff, Info, KeyRound, Loader2, LogIn, UsersRound, WifiOff } from 'lucide-react';
 import { signIn, useAuth, type AuthState } from '@/lib/auth/AuthProvider';
 import { classifySignInError, guardLoginDomain, type SignInResult } from '@/lib/auth/signIn';
 import { AREA_ROLES, areaForPath, hasAnyRole, homeForRoles, safeNextPath } from '@/lib/auth/routeAccess';
+import {
+  isManagerAccount,
+  markDeviceSignIn,
+  signInGuardOnDevice,
+  takeEnrolledNote,
+  type EnrolledNote,
+  type RosterGuard
+} from '@/lib/auth/patrolDevice';
+import { captureSessionAccessToken, forgetReplacedUser, revokeReplacedSession } from '@/lib/auth/handOver';
+import { browserStorage } from '@/lib/auth/identity';
+import { sastTimeHM } from '@/lib/config/siteTime';
 import { createClient } from '@/lib/supabase/client';
 import { useTranslation } from '@/lib/i18n/context';
 import type { TranslationKey } from '@/lib/i18n/translations';
 import type { UserRole } from '@/types/models';
-import { LanguageSwitch, SIGN_OUT_NOTICE_KEY } from '@/components/shared/HeaderNav';
+import { LanguageSwitch, SIGN_OUT_NOTICE_KEY, SignOutControl } from '@/components/shared/HeaderNav';
+import { GUARD_DEVICE_ERROR_KEYS, GuardDutyPanel } from '@/components/devices/GuardDutyPanel';
+import { useBrowserOnline, usePatrolDevice } from '@/components/devices/usePatrolDevice';
+import { useOpenShift, useQueuedRecords } from '@/components/devices/usePhoneRecords';
 
 type Translate = (key: TranslationKey, ...args: (string | number)[]) => string;
 type Notice = { tone: 'info' | 'warning' | 'danger' | 'success'; text: string };
+type LoginTab = 'guard' | 'staff';
+
+const LOGIN_TABS: ReadonlyArray<{ id: LoginTab; label: TranslationKey; icon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean | 'true' }> }> = [
+  { id: 'guard', label: 'pdevTabGuard', icon: UsersRound },
+  { id: 'staff', label: 'pdevTabStaff', icon: KeyRound }
+];
 
 const noticeClass: Record<Notice['tone'], string> = {
   info: 'border-ee-border bg-ee-bg text-ee-text',
@@ -66,8 +103,24 @@ function reasonNotice(reason: string | null, t: Translate): Notice | null {
   return null;
 }
 
-function LoginHeader() {
+function LoginHeader({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation();
+  if (compact) {
+    // Patrol phone, Guard duty tab: keep the guards' names in the first screen (320 x 640).
+    return (
+      <div className="flex items-center justify-center gap-3" data-testid="auth-login-header-compact">
+        <Image
+          src="/eagle_eye_enhanced_emblem.jpg"
+          alt={t('authLogoAlt')}
+          width={44}
+          height={44}
+          className="h-11 w-11 flex-none rounded-xl border-2 border-ee-primary/80 object-cover"
+          loading="eager"
+        />
+        <h1 className="font-display text-2xl font-bold uppercase tracking-wide">{t('authBrandName')}</h1>
+      </div>
+    );
+  }
   return (
     <div className="text-center">
       <Image
@@ -164,6 +217,8 @@ function ForgotPassword({ initialEmail }: { initialEmail: string }) {
   );
 }
 
+type SettleResult = { ok: true; state: AuthState } | { ok: false; message: string };
+
 function LoginScreen() {
   const { t } = useTranslation();
   const auth = useAuth();
@@ -171,6 +226,8 @@ function LoginScreen() {
   const searchParams = useSearchParams();
   const nextParam = searchParams.get('next');
   const reasonParam = searchParams.get('reason');
+  const device = usePatrolDevice();
+  const enrolled = device !== null;
 
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
@@ -179,11 +236,32 @@ function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const [signOutKind, setSignOutKind] = useState<'local' | 'server' | null>(null);
   const [forgotOpen, setForgotOpen] = useState(false);
+  const [chosenTab, setChosenTab] = useState<LoginTab | null>(null);
+  const [knownDeviceId, setKnownDeviceId] = useState<string | null>(null);
+  const [guardBusyId, setGuardBusyId] = useState<string | null>(null);
+  const [guardError, setGuardError] = useState<string | null>(null);
+  const [rosterReload, setRosterReload] = useState(0);
+  const [leaving, setLeaving] = useState(false);
+  const [enrolledNote, setEnrolledNote] = useState<EnrolledNote | null>(null);
+  const online = useBrowserOnline();
+  const queued = useQueuedRecords();
+  const signedInUserId = auth.status === 'signed_in' ? (auth.user?.id ?? null) : null;
+  const openShift = useOpenShift(enrolled ? signedInUserId : null);
   const submittingRef = useRef(false);
   const passwordRef = useRef<HTMLInputElement>(null);
   const loginId = useId();
   const passwordId = useId();
   const forgotId = useId();
+  const tabsId = useId();
+
+  // Remember that this phone was a patrol phone during this visit. When the server says it is not
+  // enrolled any more (revoked), the local enrolment is cleared and the guard tab stays open to
+  // explain that — decided in the same render, so the tab never flips to the password form first.
+  if (device && device.deviceId !== knownDeviceId) setKnownDeviceId(device.deviceId);
+  const enrolmentLost = !device && knownDeviceId !== null;
+
+  // The guard tab is the default on a patrol phone.
+  const tab: LoginTab = chosenTab ?? (enrolled || enrolmentLost ? 'guard' : 'staff');
 
   // How the last sign-out on this phone went (written by the sign-out flow). Read once.
   useEffect(() => {
@@ -195,6 +273,9 @@ function LoginScreen() {
       } catch {
         value = null;
       }
+      // Just enrolled this phone (the manager was signed out on the way here).
+      const note = takeEnrolledNote();
+      if (note) setEnrolledNote(note);
       if (value !== 'local' && value !== 'server') return;
       setSignOutKind(value);
       // A deliberate sign-out starts fresh: drop the ?next= left behind by the page that was open.
@@ -203,12 +284,13 @@ function LoginScreen() {
     return () => window.clearTimeout(timer);
   }, [router]);
 
-  // Already signed in (e.g. opened /login from a bookmark): go straight on.
+  // Already signed in (e.g. opened /login from a bookmark): go straight on. On a shared patrol
+  // phone the page stays, so the next guard can take over (see the "signed in" box below).
   useEffect(() => {
-    if (auth.status === 'signed_in' && !submittingRef.current) {
+    if (auth.status === 'signed_in' && !submittingRef.current && !enrolled) {
       router.replace(destinationFor(nextParam, auth.roles));
     }
-  }, [auth.status, auth.roles, nextParam, router]);
+  }, [auth.status, auth.roles, nextParam, router, enrolled]);
 
   const reasonFromAccount = auth.status === 'signed_out' ? reasonNotice(auth.reason, t) : null;
   const signOutNotice: Notice | null =
@@ -217,7 +299,62 @@ function LoginScreen() {
       : signOutKind === 'server'
         ? { tone: 'success', text: t('authSignedOut') }
         : null;
-  const notice = reasonNotice(reasonParam, t) ?? reasonFromAccount ?? signOutNotice;
+  const enrolledNotice: Notice | null = enrolledNote
+    ? {
+        tone: enrolledNote.oldRevokeFailed ? 'warning' : 'success',
+        text: [t('pdevEnrolledSignedOut', enrolledNote.siteName), enrolledNote.oldRevokeFailed ? t('pdevEnrolledOldRevokeFailed') : '']
+          .filter(Boolean)
+          .join(' ')
+      }
+    : null;
+  const notice = reasonNotice(reasonParam, t) ?? reasonFromAccount ?? enrolledNotice ?? signOutNotice;
+
+  /**
+   * After a new session exists: load that account. AuthProvider also refreshes on its own
+   * SIGNED_IN event. A refresh that this newer one supersedes resolves with the state from BEFORE
+   * the sign-in (e.g. "signed out", or the reason of an earlier attempt), which must never decide
+   * what the user is told. Unless the first answer already belongs to this account, ask once more:
+   * that last refresh is authoritative.
+   */
+  const settleSession = async (userId: string): Promise<SettleResult> => {
+    const isThisAccount = (candidate: AuthState) => candidate.status === 'signed_in' && candidate.user?.id === userId;
+    let state = await auth.refresh();
+    if (!isThisAccount(state)) state = await auth.refresh();
+    if (isThisAccount(state)) return { ok: true, state };
+    if (state.reason === 'disabled' || state.reason === 'no_profile') {
+      // The credentials were right but there is no usable Eagle Eye account: end that session here.
+      await auth.signOut();
+      return { ok: false, message: state.reason === 'disabled' ? t('authReasonDisabled') : t('authReasonNoProfile') };
+    }
+    if (state.reason === 'config_error') return { ok: false, message: t('authConfigError') };
+    return { ok: false, message: t('authErrProfileUnavailable', state.error ?? '') };
+  };
+
+  /**
+   * Shared phone, AFTER the next person's session exists: forget the previous person on this
+   * phone (cached identity; their queued records stay) and end their old session on the server
+   * in the background. Never before - see src/lib/auth/handOver.ts.
+   */
+  const finishHandOver = (previousUserId: string | null, newUserId: string, replacedToken: string | null) => {
+    if (!previousUserId || previousUserId === newUserId) return;
+    forgetReplacedUser(browserStorage(), previousUserId, newUserId);
+    try {
+      void revokeReplacedSession(createClient(), replacedToken);
+    } catch {
+      // Not configured: nothing to end on a server.
+    }
+  };
+
+  /** Before a new session is stored: wait for an earlier sign-out still running, note the current session. */
+  const prepareHandOver = async (previousUserId: string | null): Promise<string | null> => {
+    await auth.settlePendingSignOut();
+    if (!previousUserId) return null;
+    try {
+      return await captureSessionAccessToken(createClient(), previousUserId);
+    } catch {
+      return null;
+    }
+  };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -234,6 +371,9 @@ function LoginScreen() {
     submittingRef.current = true;
     setSubmitting(true);
     try {
+      // Whoever is signed in stays signed in unless the password is right (hand-over rule).
+      const previousUserId = signedInUserId;
+      const replacedToken = await prepareHandOver(previousUserId);
       const result = await signIn(login, password);
       if (!result.ok) {
         setError(signInErrorText(result, t));
@@ -241,27 +381,14 @@ function LoginScreen() {
         passwordRef.current?.focus();
         return;
       }
-      // AuthProvider also refreshes on its own SIGNED_IN event. A refresh that this newer one
-      // supersedes resolves with the state from BEFORE the sign-in (e.g. "signed out", or the reason
-      // of an earlier attempt), which must never decide what the user is told. Unless the first
-      // answer already belongs to this account, ask once more: that last refresh is authoritative.
-      const isThisAccount = (candidate: AuthState) =>
-        candidate.status === 'signed_in' && candidate.user?.id === result.userId;
-      let state = await auth.refresh();
-      if (!isThisAccount(state)) state = await auth.refresh();
-      if (isThisAccount(state)) {
-        router.replace(destinationFor(nextParam, state.roles));
+      finishHandOver(previousUserId, result.userId, replacedToken);
+      const settled = await settleSession(result.userId);
+      if (settled.ok) {
+        setLeaving(true);
+        router.replace(destinationFor(nextParam, settled.state.roles));
         return;
       }
-      if (state.reason === 'disabled' || state.reason === 'no_profile') {
-        // The password was right but there is no usable Eagle Eye account: end that session here.
-        await auth.signOut();
-        setError(state.reason === 'disabled' ? t('authReasonDisabled') : t('authReasonNoProfile'));
-      } else if (state.reason === 'config_error') {
-        setError(t('authConfigError'));
-      } else {
-        setError(t('authErrProfileUnavailable', state.error ?? ''));
-      }
+      setError(settled.message);
     } catch (err) {
       setError(t('authErrGeneric', err instanceof Error ? err.message : String(err)));
     } finally {
@@ -270,15 +397,196 @@ function LoginScreen() {
     }
   };
 
-  const redirecting = auth.status === 'signed_in' && !submitting;
+  const handleGuardSelect = async (guard: RosterGuard) => {
+    if (submittingRef.current) return;
+    setGuardError(null);
+    if (auth.status === 'signed_in' && auth.user?.id === guard.id) {
+      // This guard already holds the phone's session.
+      setLeaving(true);
+      router.replace('/guard');
+      return;
+    }
+    if (isOffline()) {
+      setGuardError(t('pdevErrOffline'));
+      return;
+    }
+    let supabase: ReturnType<typeof createClient>;
+    try {
+      supabase = createClient();
+    } catch {
+      setGuardError(t('authConfigError'));
+      return;
+    }
+    submittingRef.current = true;
+    setGuardBusyId(guard.id);
+    try {
+      // The previous person is forgotten only once the server agreed AND the new session exists.
+      const previousUserId = signedInUserId;
+      let replacedToken: string | null = null;
+      const result = await signInGuardOnDevice(supabase, guard.id, {
+        beforeSession: async () => {
+          replacedToken = await prepareHandOver(previousUserId);
+        }
+      });
+      if (!result.ok) {
+        // The roster may have changed (guard removed from the site, account disabled).
+        if (result.error === 'not_allowed') setRosterReload((n) => n + 1);
+        setGuardError(t(GUARD_DEVICE_ERROR_KEYS[result.error]));
+        return;
+      }
+      finishHandOver(previousUserId, result.userId, replacedToken);
+      const settled = await settleSession(result.userId);
+      if (!settled.ok) {
+        setGuardError(settled.message);
+        return;
+      }
+      // The guard home asks "Signed in as <name> – not you?" for a minute (gloved mis-taps).
+      markDeviceSignIn(result.userId);
+      setLeaving(true);
+      router.replace('/guard');
+    } catch {
+      setGuardError(t('pdevErrFailed'));
+    } finally {
+      submittingRef.current = false;
+      setGuardBusyId(null);
+    }
+  };
+
+  const selectTab = (next: LoginTab) => {
+    setChosenTab(next);
+    setGuardError(null);
+  };
+
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const index = LOGIN_TABS.findIndex((item) => item.id === tab);
+    let next = -1;
+    if (event.key === 'ArrowRight') next = (index + 1) % LOGIN_TABS.length;
+    else if (event.key === 'ArrowLeft') next = (index - 1 + LOGIN_TABS.length) % LOGIN_TABS.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = LOGIN_TABS.length - 1;
+    if (next < 0) return;
+    event.preventDefault();
+    const target = LOGIN_TABS[next];
+    selectTab(target.id);
+    document.getElementById(`${tabsId}-tab-${target.id}`)?.focus();
+  };
+
+  const busy = submitting || guardBusyId !== null;
+  const redirecting = leaving || (auth.status === 'signed_in' && !busy && !enrolled);
+  const currentName =
+    auth.status === 'signed_in'
+      ? (auth.profile ? `${auth.profile.firstName} ${auth.profile.lastName}`.trim() : '') || auth.user?.email || ''
+      : '';
+  const showHandOver = enrolled && auth.status === 'signed_in' && !busy && !redirecting;
+  const managerOnPhone = showHandOver && isManagerAccount(auth.roles);
+  const clockedInSince = showHandOver && !managerOnPhone && openShift ? sastTimeHM(openShift.startedAt) : null;
+  const compactHeader = enrolled && tab === 'guard' && !redirecting;
+
+  const staffPanel = (
+    <>
+      <h2 className="font-display text-2xl font-semibold">{t('authSignInTitle')}</h2>
+      <p className="mb-4 mt-1 text-sm text-ee-muted">{t('pdevStaffHint')}</p>
+
+      <div role="alert" aria-live="assertive" data-testid="auth-login-error">
+        {error && (
+          <p className="mb-4 flex items-start gap-2 rounded-xl border border-ee-danger/70 bg-ee-danger/15 p-3 text-sm font-semibold text-ee-danger-text">
+            <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+            <span>{error}</span>
+          </p>
+        )}
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-4" noValidate data-testid="auth-login-form">
+        <div>
+          <label htmlFor={loginId} className="mb-1.5 block text-sm font-semibold text-ee-muted">
+            {t('authLoginLabel')}
+          </label>
+          <input
+            id={loginId}
+            name="username"
+            type="text"
+            value={login}
+            onChange={(event) => setLogin(event.target.value)}
+            // A shared patrol phone must not offer to remember a manager's login.
+            autoComplete={enrolled ? 'off' : 'username'}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            aria-describedby={`${loginId}-hint`}
+            className={inputClass}
+            data-testid="auth-login-username"
+          />
+          <p id={`${loginId}-hint`} className="mt-1 text-xs text-ee-muted">
+            {t('authLoginHint')}
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor={passwordId} className="mb-1.5 block text-sm font-semibold text-ee-muted">
+            {t('authPasswordLabel')}
+          </label>
+          <div className="relative">
+            <input
+              id={passwordId}
+              ref={passwordRef}
+              name="password"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete={enrolled ? 'off' : 'current-password'}
+              className={`${inputClass} pr-14`}
+              data-testid="auth-login-password"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((value) => !value)}
+              aria-label={showPassword ? t('authHidePassword') : t('authShowPassword')}
+              aria-pressed={showPassword}
+              aria-controls={passwordId}
+              className="absolute right-1 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-lg text-ee-muted hover:text-ee-text"
+              data-testid="auth-login-toggle-password"
+            >
+              {showPassword ? <EyeOff className="h-5 w-5" aria-hidden="true" /> : <Eye className="h-5 w-5" aria-hidden="true" />}
+            </button>
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          disabled={busy}
+          className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-xl border border-ee-primary bg-ee-primary px-6 text-lg font-bold text-ee-on-primary hover:bg-ee-primary-strong disabled:opacity-60"
+          data-testid="auth-login-submit"
+        >
+          {submitting ? (
+            <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          ) : (
+            <LogIn className="h-5 w-5" aria-hidden="true" />
+          )}
+          <span>{submitting ? t('authSigningIn') : t('authSignIn')}</span>
+        </button>
+      </form>
+
+      <button
+        type="button"
+        onClick={() => setForgotOpen((open) => !open)}
+        aria-expanded={forgotOpen}
+        aria-controls={forgotId}
+        className="mt-3 min-h-12 w-full rounded-xl text-base font-semibold text-ee-primary underline-offset-4 hover:underline"
+        data-testid="auth-login-forgot"
+      >
+        {t('authForgotPassword')}
+      </button>
+      <div id={forgotId} hidden={!forgotOpen}>
+        {forgotOpen && <ForgotPassword initialEmail={login.includes('@') ? login.trim() : ''} />}
+      </div>
+    </>
+  );
 
   return (
-    <div className="w-full max-w-sm space-y-6">
-      <LoginHeader />
+    <div className={`w-full max-w-sm ${compactHeader ? 'space-y-3' : 'space-y-6'}`}>
+      <LoginHeader compact={compactHeader} />
 
-      <div className="rounded-2xl border border-ee-border bg-ee-surface p-5">
-        <h2 className="mb-4 font-display text-2xl font-semibold">{t('authSignInTitle')}</h2>
-
+      <div className="rounded-2xl border border-ee-border bg-ee-surface p-4 sm:p-5">
         {notice && (
           <p
             role={notice.tone === 'danger' ? 'alert' : 'status'}
@@ -290,104 +598,115 @@ function LoginScreen() {
           </p>
         )}
 
-        <div role="alert" aria-live="assertive" data-testid="auth-login-error">
-          {error && (
-            <p className="mb-4 flex items-start gap-2 rounded-xl border border-ee-danger/70 bg-ee-danger/15 p-3 text-sm font-semibold text-ee-danger-text">
-              <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
-              <span>{error}</span>
-            </p>
-          )}
-        </div>
-
         {redirecting ? (
-          <p role="status" className="text-base text-ee-muted" data-testid="auth-login-redirecting">
-            {t('authOpeningYourArea')}
-          </p>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4" noValidate data-testid="auth-login-form">
-            <div>
-              <label htmlFor={loginId} className="mb-1.5 block text-sm font-semibold text-ee-muted">
-                {t('authLoginLabel')}
-              </label>
-              <input
-                id={loginId}
-                name="username"
-                type="text"
-                value={login}
-                onChange={(event) => setLogin(event.target.value)}
-                autoComplete="username"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                aria-describedby={`${loginId}-hint`}
-                className={inputClass}
-                data-testid="auth-login-username"
-              />
-              <p id={`${loginId}-hint`} className="mt-1 text-xs text-ee-muted">
-                {t('authLoginHint')}
-              </p>
-            </div>
-
-            <div>
-              <label htmlFor={passwordId} className="mb-1.5 block text-sm font-semibold text-ee-muted">
-                {t('authPasswordLabel')}
-              </label>
-              <div className="relative">
-                <input
-                  id={passwordId}
-                  ref={passwordRef}
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  autoComplete="current-password"
-                  className={`${inputClass} pr-14`}
-                  data-testid="auth-login-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((value) => !value)}
-                  aria-label={showPassword ? t('authHidePassword') : t('authShowPassword')}
-                  aria-pressed={showPassword}
-                  aria-controls={passwordId}
-                  className="absolute right-1 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-lg text-ee-muted hover:text-ee-text"
-                  data-testid="auth-login-toggle-password"
-                >
-                  {showPassword ? <EyeOff className="h-5 w-5" aria-hidden="true" /> : <Eye className="h-5 w-5" aria-hidden="true" />}
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={submitting}
-              className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-xl border border-ee-primary bg-ee-primary px-6 text-lg font-bold text-ee-on-primary hover:bg-ee-primary-strong disabled:opacity-60"
-              data-testid="auth-login-submit"
-            >
-              {submitting ? (
-                <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-              ) : (
-                <LogIn className="h-5 w-5" aria-hidden="true" />
-              )}
-              <span>{submitting ? t('authSigningIn') : t('authSignIn')}</span>
-            </button>
-          </form>
-        )}
-
-        {!redirecting && (
           <>
-            <button
-              type="button"
-              onClick={() => setForgotOpen((open) => !open)}
-              aria-expanded={forgotOpen}
-              aria-controls={forgotId}
-              className="mt-3 min-h-12 w-full rounded-xl text-base font-semibold text-ee-primary underline-offset-4 hover:underline"
-              data-testid="auth-login-forgot"
+            <h2 className="mb-4 font-display text-2xl font-semibold">{t('authSignInTitle')}</h2>
+            <div role="alert" aria-live="assertive" data-testid="auth-login-error" />
+            <p role="status" className="text-base text-ee-muted" data-testid="auth-login-redirecting">
+              {t('authOpeningYourArea')}
+            </p>
+          </>
+        ) : (
+          <>
+            {showHandOver && (
+              <div
+                className={`mb-4 space-y-3 rounded-xl border p-3 ${
+                  managerOnPhone ? 'border-ee-danger/70 bg-ee-danger/15' : 'border-ee-primary/60 bg-ee-primary/10'
+                }`}
+                data-testid="device-signed-in"
+                data-manager={managerOnPhone ? 'true' : undefined}
+              >
+                <p className="text-base font-semibold text-ee-text">{t('pdevSignedInOnPhone', currentName)}</p>
+                {managerOnPhone ? (
+                  <>
+                    <p className="text-sm text-ee-text" data-testid="device-manager-on-phone">
+                      {t('pdevManagerOnPhone', currentName)}
+                    </p>
+                    <SignOutControl variant="full" testId="device-manager-signout" />
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-ee-text">{t('pdevSwitchNote', currentName)}</p>
+                    {!online && (
+                      <p className="flex items-start gap-2 text-sm font-semibold text-ee-warning" data-testid="device-handover-offline">
+                        <WifiOff className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+                        <span>{t('pdevOfflineHandOver', currentName)}</span>
+                      </p>
+                    )}
+                    {clockedInSince && (
+                      <p className="flex items-start gap-2 text-sm font-semibold text-ee-warning" data-testid="device-handover-clocked-in">
+                        <Clock className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+                        <span>{t('pdevClockedInWarning', currentName, clockedInSince)}</span>
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLeaving(true);
+                        router.replace(destinationFor(nextParam, auth.roles));
+                      }}
+                      className="inline-flex min-h-12 w-full items-center justify-center rounded-xl border border-ee-border bg-ee-surface px-4 text-base font-semibold text-ee-text hover:bg-ee-surface-raised"
+                      data-testid="device-continue"
+                    >
+                      {clockedInSince ? t('pdevBackToClockOut') : t('pdevContinueAs', currentName)}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            <div
+              role="tablist"
+              aria-label={t('pdevTabsLabel')}
+              className="mb-4 grid grid-cols-2 gap-1 rounded-xl border border-ee-border bg-ee-bg p-1"
+              onKeyDown={onTabKeyDown}
             >
-              {t('authForgotPassword')}
-            </button>
-            <div id={forgotId} hidden={!forgotOpen}>
-              {forgotOpen && <ForgotPassword initialEmail={login.includes('@') ? login.trim() : ''} />}
+              {LOGIN_TABS.map((item) => {
+                const Icon = item.icon;
+                const selected = tab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    id={`${tabsId}-tab-${item.id}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    aria-controls={selected ? `${tabsId}-panel-${item.id}` : undefined}
+                    tabIndex={selected ? 0 : -1}
+                    onClick={() => selectTab(item.id)}
+                    disabled={busy && !selected}
+                    className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-lg px-2 py-2 text-center text-sm font-semibold leading-tight focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ee-primary disabled:opacity-50 min-[360px]:flex-row min-[360px]:gap-2 ${
+                      selected ? 'bg-ee-primary text-ee-on-primary' : 'text-ee-muted hover:bg-ee-surface-raised hover:text-ee-text'
+                    }`}
+                    data-testid={`device-tab-${item.id}`}
+                  >
+                    <Icon className="h-5 w-5 flex-none" aria-hidden="true" />
+                    <span className="break-words">{t(item.label)}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div id={`${tabsId}-panel-${tab}`} role="tabpanel" aria-labelledby={`${tabsId}-tab-${tab}`}>
+              {tab === 'guard' ? (
+                <GuardDutyPanel
+                  device={device}
+                  enrolmentLost={enrolmentLost}
+                  busyGuardId={guardBusyId}
+                  disabled={submitting}
+                  error={guardError}
+                  reloadSignal={rosterReload}
+                  queued={queued.ready ? queued : null}
+                  showQueuedTotal={auth.status !== 'signed_in'}
+                  onSelectGuard={(guard) => void handleGuardSelect(guard)}
+                  onUsePassword={() => {
+                    selectTab('staff');
+                    window.setTimeout(() => document.getElementById(`${tabsId}-tab-staff`)?.focus(), 0);
+                  }}
+                />
+              ) : (
+                staffPanel
+              )}
             </div>
           </>
         )}

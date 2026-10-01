@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link';
 import { AlertTriangle, Car, LayoutList, Route, X } from 'lucide-react';
 import { HeaderNav } from '@/components/shared/HeaderNav';
+import { PatrolDevicesPanel } from '@/components/devices/PatrolDevicesPanel';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { useTranslation } from '@/lib/i18n/context';
 import { createClient } from '@/lib/supabase/client';
@@ -511,6 +512,9 @@ export function SupervisorDashboard() {
                 </>
               )}
             </div>
+
+            {/* Patrol phones of the supervisor's sites (enrol this phone / revoke). */}
+            {tab === 'overview' && <PatrolDevicesPanel className="border-t border-ee-border pt-6" />}
           </>
         )}
       </main>

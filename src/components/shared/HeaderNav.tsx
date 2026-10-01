@@ -32,6 +32,9 @@ import { sastDateString, sastTimeHM } from '@/lib/config/siteTime';
 import { EMPTY_SYNC_SUMMARY, type OfflineEventType, type OfflineQueueItem, type OfflineSyncSummary } from '@/types/offline';
 import type { SupportedLanguage, UserRole } from '@/types/models';
 import { EVENT_TYPE_KEYS, readableSyncError } from '@/app/guard/history/guardEvents';
+import { usePatrolDevice } from '@/components/devices/usePatrolDevice';
+import { useOpenShift } from '@/components/devices/usePhoneRecords';
+import { PatrolPhoneManagerNotice } from '@/components/devices/PatrolPhoneManagerNotice';
 
 // ---------------------------------------------------------------------------
 // Small shared helpers
@@ -527,10 +530,27 @@ export function SyncStatusButton({ hideWhenIdle = false, className = '' }: SyncS
 // Sign-out (refuses to hide unsynced records unless the user insists)
 // ---------------------------------------------------------------------------
 
+/**
+ * On an enrolled patrol phone, what the person signing out must know first (shown in one dialog
+ * whose default is "Stay signed in"): no signal (then nobody - not even they - can sign in again,
+ * and there is no SOS button, until there is signal), an open shift, records not uploaded yet.
+ */
+export interface PatrolSignOutCheck {
+  offline: boolean;
+  /** ISO time of the clock-in of the shift still open on this phone, or null. */
+  clockedInSince: string | null;
+  /** This person's records on this phone that have not uploaded yet. */
+  queued: number;
+}
+
 export function useSignOutFlow() {
   const auth = useAuth();
   const router = useRouter();
+  const patrolPhone = usePatrolDevice() !== null;
+  const userId = auth.status === 'signed_in' ? (auth.user?.id ?? null) : null;
+  const openShift = useOpenShift(patrolPhone ? userId : null);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [patrolCheck, setPatrolCheck] = useState<PatrolSignOutCheck | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -568,13 +588,45 @@ export function useSignOutFlow() {
     [auth, busy, finish]
   );
 
+  const start = useCallback(async () => {
+    if (busy) return;
+    if (patrolPhone) {
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      const clockedInSince = openShift?.startedAt ?? null;
+      let queued = 0;
+      if (userId && syncEngine) {
+        try {
+          queued = await syncEngine.pendingCountForUser(userId);
+        } catch {
+          queued = 0;
+        }
+      }
+      if (offline || clockedInSince || queued > 0) {
+        setPatrolCheck({ offline, clockedInSince, queued });
+        return;
+      }
+    }
+    await run(false);
+  }, [busy, patrolPhone, openShift, userId, run]);
+
   return {
     busy,
     error,
     pendingCount,
-    start: () => void run(false),
-    signOutAnyway: () => void run(true),
-    cancel: () => setPendingCount(null)
+    patrolCheck,
+    start: () => void start(),
+    signOutAnyway: () => {
+      setPatrolCheck(null);
+      void run(true);
+    },
+    goClockOut: () => {
+      setPatrolCheck(null);
+      router.push('/guard');
+    },
+    cancel: () => {
+      setPendingCount(null);
+      setPatrolCheck(null);
+    }
   };
 }
 
@@ -586,9 +638,13 @@ export interface SignOutControlProps {
 /** Sign-out button + the "records not uploaded yet" dialog. */
 export function SignOutControl({ variant = 'header', testId = 'chrome-signout' }: SignOutControlProps) {
   const { t } = useTranslation();
+  const { roles } = useAuth();
   const flow = useSignOutFlow();
   const titleId = useId();
   const bodyId = useId();
+  const patrolTitleId = useId();
+  const patrolBodyId = useId();
+  const check = flow.patrolCheck;
 
   return (
     <>
@@ -646,6 +702,59 @@ export function SignOutControl({ variant = 'header', testId = 'chrome-signout' }
           </button>
         </div>
       </ModalDialog>
+      <ModalDialog
+        open={check !== null}
+        onClose={flow.cancel}
+        labelledBy={patrolTitleId}
+        describedBy={patrolBodyId}
+        testId="chrome-signout-patrol-dialog"
+      >
+        <h2 id={patrolTitleId} className="font-display text-2xl font-semibold text-ee-warning">
+          {t('pdevSignOutCheckTitle')}
+        </h2>
+        <div id={patrolBodyId} className="mt-2 space-y-3 text-base">
+          {check?.offline && (
+            <p className="flex items-start gap-2 font-semibold text-ee-warning" data-testid="chrome-signout-patrol-offline">
+              <WifiOff className="mt-1 h-5 w-5 flex-none" aria-hidden="true" />
+              <span>{t('pdevSignOutOffline')}</span>
+            </p>
+          )}
+          {check?.clockedInSince && (
+            <p data-testid="chrome-signout-patrol-clocked-in">{t('pdevSignOutClockedIn', sastTimeHM(check.clockedInSince))}</p>
+          )}
+          {check && check.queued > 0 && <p data-testid="chrome-signout-patrol-queued">{t('pdevSignOutQueued', check.queued)}</p>}
+        </div>
+        <div className="mt-5 grid gap-2">
+          <button
+            type="button"
+            onClick={flow.cancel}
+            className={`${chromeButton.primary} min-h-14 text-base`}
+            data-autofocus
+            data-testid="chrome-signout-patrol-stay"
+          >
+            {t('pdevStaySignedIn')}
+          </button>
+          {check?.clockedInSince && roles.includes('guard') && (
+            <button
+              type="button"
+              onClick={flow.goClockOut}
+              className={`${chromeButton.secondary} min-h-14 text-base`}
+              data-testid="chrome-signout-patrol-clock-out"
+            >
+              {t('pdevGoClockOut')}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={flow.signOutAnyway}
+            disabled={flow.busy}
+            className={`${chromeButton.danger} min-h-14 text-left text-base`}
+            data-testid="chrome-signout-patrol-force"
+          >
+            {t('pdevSignOutAnyway')}
+          </button>
+        </div>
+      </ModalDialog>
     </>
   );
 }
@@ -673,6 +782,8 @@ interface HeaderNavProps {
 export function HeaderNav({ title, subtitle, showBack = false, backHref, rightAction }: HeaderNavProps) {
   const { t } = useTranslation();
   const { profile, roles, status } = useAuth();
+  // Idle sign-out of a manager left signed in on a patrol phone (no records check: force).
+  const idleSignOut = useSignOutFlow();
   const home = homeForRoles(roles);
   const roleKey = ROLE_LABEL_KEYS.find(([role]) => roles.includes(role))?.[1];
   const displayName = profile ? `${profile.firstName} ${profile.lastName}`.trim() : '';
@@ -741,6 +852,7 @@ export function HeaderNav({ title, subtitle, showBack = false, backHref, rightAc
           {status === 'signed_in' && <SignOutControl variant="header" testId="chrome-header-signout" />}
         </div>
       </div>
+      {status === 'signed_in' && <PatrolPhoneManagerNotice onIdle={idleSignOut.signOutAnyway} />}
     </header>
   );
 }

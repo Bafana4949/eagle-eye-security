@@ -3,7 +3,7 @@
  * (real migrations + RLS), Auth users / sessions / refresh tokens, Storage object bytes,
  * the request log and scripted faults.
  */
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import type { PGlite, Transaction } from '@electric-sql/pglite';
 import { cloneTestDb, createTestDb, listMigrationFiles, withClaims, type JwtClaims } from '../../db/harness';
 import { seedE2EFixture, type CreateAuthUserInput, type E2EFixture } from '../fixture';
@@ -58,6 +58,24 @@ export interface RecoveryRecord {
   used: boolean;
 }
 
+/**
+ * A magic link minted by POST /auth/v1/admin/generate_link (service role only). Like GoTrue it
+ * is single-use, expires (magicLinkTtlSeconds) and a newer link for the same user replaces it.
+ */
+export interface MagicLinkRecord {
+  userId: string;
+  /** The account's e-mail when the link was minted (a later e-mail change invalidates it). */
+  email: string;
+  /** GoTrue's hashed_token (sha224 hex of e-mail + OTP); verifyOtp sends it back as token_hash. */
+  tokenHash: string;
+  emailOtp: string;
+  redirectTo: string | null;
+  createdAt: number;
+  usedAt: number | null;
+  /** Set when a newer link for the same user replaced this one. */
+  supersededAt: number | null;
+}
+
 export interface StoredObject {
   bucket: string;
   name: string;
@@ -110,10 +128,19 @@ export interface FaultRuleInput {
 
 const REQUEST_LOG_LIMIT = 2000;
 
+/**
+ * Lifetime of an admin-generated magic link. GoTrue's default (MAILER_OTP_EXP) is one hour; the
+ * fake uses five minutes because the app verifies the token immediately (POST /__test/config
+ * { magicLinkTtlSeconds } shortens it further to test expiry).
+ */
+export const DEFAULT_MAGIC_LINK_TTL_SECONDS = 300;
+
 export class FakeSupabaseState {
   template!: PGlite;
   db!: PGlite;
   schema!: SchemaCache;
+  /** The schema cache of the migrated template (restored on every reset). */
+  private templateSchema!: SchemaCache;
   fixture: E2EFixture | null = null;
   migrations: string[] = [];
   resets = 0;
@@ -124,6 +151,8 @@ export class FakeSupabaseState {
   readonly sessions = new Map<string, SessionRecord>();
   readonly refreshTokens = new Map<string, RefreshRecord>();
   readonly recoveries: RecoveryRecord[] = [];
+  readonly magicLinks: MagicLinkRecord[] = [];
+  magicLinkTtlSeconds = DEFAULT_MAGIC_LINK_TTL_SECONDS;
   readonly objects = new Map<string, StoredObject>();
   readonly requestLog: RequestLogEntry[] = [];
   requestSeq = 0;
@@ -140,7 +169,8 @@ export class FakeSupabaseState {
     this.template = await createTestDb();
     await this.template.exec(`SET TIME ZONE 'UTC'`);
     this.migrations = listMigrationFiles().map((file) => path.basename(file));
-    this.schema = await loadSchemaCache(this.template);
+    this.templateSchema = await loadSchemaCache(this.template);
+    this.schema = this.templateSchema;
     await this.reset({ seed: true });
     this.ready = true;
   }
@@ -159,6 +189,8 @@ export class FakeSupabaseState {
     this.sessions.clear();
     this.refreshTokens.clear();
     this.recoveries.length = 0;
+    this.magicLinks.length = 0;
+    this.magicLinkTtlSeconds = DEFAULT_MAGIC_LINK_TTL_SECONDS;
     this.objects.clear();
     this.faults = [];
     this.jwtExpirySeconds = 3600;
@@ -171,6 +203,8 @@ export class FakeSupabaseState {
     }
     const old = this.db as PGlite | undefined;
     this.db = next;
+    // A reload after ad-hoc DDL (POST /__test/schema/reload) must not outlive the database it described.
+    this.schema = this.templateSchema;
     this.fixture = fixture;
     this.resets += 1;
     if (old) {
@@ -298,6 +332,39 @@ export class FakeSupabaseState {
     for (const record of this.refreshTokens.values()) {
       if (record.sessionId === sessionId && record.revokedAt === null) record.revokedAt = Date.now();
     }
+  }
+
+  /**
+   * Mints a magic link the way GoTrue's admin generate_link does: a random 6-digit OTP and
+   * hashed_token = sha224(email + otp) in hex. GoTrue keeps ONE such token per user, so an older
+   * unused link of the same user stops working.
+   */
+  newMagicLink(user: AuthUser, redirectTo: string | null): MagicLinkRecord {
+    const now = Date.now();
+    for (const link of this.magicLinks) {
+      if (link.userId === user.id && link.usedAt === null && link.supersededAt === null) link.supersededAt = now;
+    }
+    let emailOtp = '';
+    let tokenHash = '';
+    do {
+      emailOtp = String(randomInt(0, 1_000_000)).padStart(6, '0');
+      tokenHash = createHash('sha224').update(`${user.email}${emailOtp}`).digest('hex');
+    } while (this.magicLinks.some((link) => link.tokenHash === tokenHash));
+    const record: MagicLinkRecord = { userId: user.id, email: user.email, tokenHash, emailOtp, redirectTo, createdAt: now, usedAt: null, supersededAt: null };
+    this.magicLinks.push(record);
+    return record;
+  }
+
+  magicLinkExpired(link: MagicLinkRecord, now: number = Date.now()): boolean {
+    return now - link.createdAt > this.magicLinkTtlSeconds * 1000;
+  }
+
+  // ---------------------------------------------------------------- schema cache
+
+  /** PostgREST's `NOTIFY pgrst, 'reload schema'`: re-reads the catalog of the live database. */
+  async reloadSchema(): Promise<SchemaCache> {
+    this.schema = await this.asSuperuser((db) => loadSchemaCache(db));
+    return this.schema;
   }
 
   // ---------------------------------------------------------------- request log / faults

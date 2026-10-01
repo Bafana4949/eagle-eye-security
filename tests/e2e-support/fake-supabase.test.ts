@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
+import { connect as netConnect } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { loadIdentity } from '../../src/lib/auth/identity';
@@ -452,6 +453,27 @@ describe('fake Supabase: realtime and faults', () => {
       req.end();
     });
     assert.equal(status, 503);
+  });
+
+  it('survives clients that reset a refused upgrade (a browser context closing mid-request)', async () => {
+    for (let i = 0; i < 30; i += 1) {
+      await new Promise<void>((resolve) => {
+        const socket = netConnect(fake.port, '127.0.0.1', () => {
+          socket.write(
+            `GET /realtime/v1/websocket?apikey=${TEST_ANON_KEY}&vsn=1.0.0 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\n` +
+              'Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n'
+          );
+          setTimeout(() => {
+            socket.resetAndDestroy();
+            resolve();
+          }, i % 5);
+        });
+        socket.on('error', () => resolve());
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const res = await retryFetch(`${fake.url}/__test/health`);
+    assert.equal(res.status, 200, 'the fake server is still up');
   });
 
   it('lose_response applies the write but the client sees a network failure; outage drops everything', async () => {

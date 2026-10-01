@@ -9,14 +9,17 @@
  *   /rest/v1/*     PostgREST subset (postgrest.ts)
  *   /storage/v1/*  Storage subset (storage.ts)     — bytes kept in memory
  *   /realtime/v1   refused (WebSocket upgrades get 503) so the app must fall back to polling
- *   /__test/*      test control: reset + seed, fixture, superuser SQL, request log, faults
+ *   /__test/*      test control: reset + seed, fixture, superuser SQL, request log, faults,
+ *                  recovery / magic links "sent", schema-cache reload
+ * Requests carrying the service-role key run as the database role service_role (BYPASSRLS, but
+ * function EXECUTE grants still apply), exactly like the Next.js server's service-role client.
  * Start it with `npx tsx tests/e2e-support/fake-supabase/main.ts` (playwright.config.ts does).
  */
 import { randomInt } from 'node:crypto';
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import { FAKE_SUPABASE_PORT, TEST_CONTROL_HEADER, TEST_CONTROL_TOKEN } from '../constants';
-import { handleAuth, recoveryLinks, resolveCaller } from './gotrue';
+import { handleAuth, magicLinkSummaries, recoveryLinks, resolveCaller } from './gotrue';
 import { HttpError, corsHeaders, header, parseJsonBody, readBody, send, sleep } from './http';
 import { PostgrestHandler } from './postgrest';
 import { FakeSupabaseState, type Caller, type FaultRuleInput } from './state';
@@ -153,6 +156,11 @@ async function handleControl(
     return send(req, res, 200, { outage: input.on === true });
   }
   if (subpath === 'recoveries' && method === 'GET') return send(req, res, 200, { recoveries: recoveryLinks(state) });
+  if (subpath === 'magiclinks' && method === 'GET') return send(req, res, 200, { magicLinks: magicLinkSummaries(state) });
+  if (subpath === 'schema/reload' && method === 'POST') {
+    const schema = await state.reloadSchema();
+    return send(req, res, 200, { relations: schema.relations.size, functions: schema.functions.size });
+  }
   if (subpath === 'sessions' && method === 'GET') {
     return send(req, res, 200, {
       sessions: [...state.sessions.values()].map((s) => ({ id: s.id, userId: s.userId, revoked: s.revoked, createdAt: new Date(s.createdAt).toISOString(), amr: s.amr }))
@@ -164,7 +172,12 @@ async function handleControl(
       if (!Number.isInteger(seconds) || seconds < 5) throw new HttpError(400, { message: 'jwtExpirySeconds must be an integer >= 5' });
       state.jwtExpirySeconds = seconds;
     }
-    return send(req, res, 200, { jwtExpirySeconds: state.jwtExpirySeconds });
+    if (input.magicLinkTtlSeconds !== undefined) {
+      const seconds = Number(input.magicLinkTtlSeconds);
+      if (!Number.isInteger(seconds) || seconds < 1) throw new HttpError(400, { message: 'magicLinkTtlSeconds must be an integer >= 1' });
+      state.magicLinkTtlSeconds = seconds;
+    }
+    return send(req, res, 200, { jwtExpirySeconds: state.jwtExpirySeconds, magicLinkTtlSeconds: state.magicLinkTtlSeconds });
   }
   if (subpath === 'storage' && method === 'GET') {
     const prefix = url.searchParams.get('prefix') ?? '';
@@ -317,6 +330,10 @@ export async function startFakeSupabase(options: { port?: number; host?: string;
   // Realtime: refuse WebSocket upgrades cleanly (supabase-js reports CHANNEL_ERROR and retries).
   server.on('upgrade', (req: IncomingMessage, socket: Socket) => {
     state.realtimeUpgradesRefused += 1;
+    // The HTTP server no longer watches an upgraded socket. A browser that goes away mid-refusal
+    // (context closed at the end of a test) resets it; without a listener that 'error' would be
+    // thrown and kill the whole fake server.
+    socket.on('error', () => socket.destroy());
     const message = 'Realtime is not available in the E2E fake server\n';
     socket.end(
       `HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(message)}\r\nConnection: close\r\n\r\n${message}`

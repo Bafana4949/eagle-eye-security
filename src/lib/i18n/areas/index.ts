@@ -6,6 +6,7 @@ import { incidentTranslations } from './incident';
 import { adminTranslations } from './admin';
 import { supervisorTranslations } from './supervisor';
 import { pwaTranslations } from './pwa';
+import { devicesTranslations } from './devices';
 
 export const areaTranslations = {
   en: {
@@ -17,6 +18,7 @@ export const areaTranslations = {
     ...adminTranslations.en,
     ...supervisorTranslations.en,
     ...pwaTranslations.en,
+    ...devicesTranslations.en,
   },
   af: {
     ...authTranslations.af,
@@ -27,6 +29,7 @@ export const areaTranslations = {
     ...adminTranslations.af,
     ...supervisorTranslations.af,
     ...pwaTranslations.af,
+    ...devicesTranslations.af,
   },
   zu: {
     ...authTranslations.zu,
@@ -37,5 +40,6 @@ export const areaTranslations = {
     ...adminTranslations.zu,
     ...supervisorTranslations.zu,
     ...pwaTranslations.zu,
+    ...devicesTranslations.zu,
   },
 };

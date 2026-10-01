@@ -2,13 +2,18 @@
  * Client for the fake Supabase server's /__test control API (reset + seed, fixture data,
  * superuser / as-user SQL for assertions, request log, fault injection, recovery links).
  */
-import { FAKE_SUPABASE_URL, TEST_CONTROL_HEADER, TEST_CONTROL_TOKEN } from '../../tests/e2e-support/constants';
-import type { RecoveryLink } from '../../tests/e2e-support/fake-supabase/gotrue';
+import {
+  FAKE_SUPABASE_URL,
+  TEST_CONTROL_HEADER,
+  TEST_CONTROL_TOKEN,
+  TEST_SERVICE_ROLE_KEY
+} from '../../tests/e2e-support/constants';
+import type { MagicLinkSummary, RecoveryLink } from '../../tests/e2e-support/fake-supabase/gotrue';
 import type { E2EFixture } from '../../tests/e2e-support/fixture';
 import { retryFetch } from '../../tests/e2e-support/netRetry';
 
 export type { E2EFixture, E2EUser, E2EUserKey, E2ECheckpoint, E2ESite } from '../../tests/e2e-support/fixture';
-export type { RecoveryLink } from '../../tests/e2e-support/fake-supabase/gotrue';
+export type { MagicLinkSummary, RecoveryLink } from '../../tests/e2e-support/fake-supabase/gotrue';
 
 export interface FakeHealth {
   ok: boolean;
@@ -145,8 +150,40 @@ export class FakeSupabaseControl {
     return (await this.call<{ recoveries: RecoveryLink[] }>('recoveries')).recoveries;
   }
 
-  async sessions(): Promise<Array<{ id: string; userId: string; revoked: boolean; createdAt: string }>> {
+  async sessions(): Promise<
+    Array<{ id: string; userId: string; revoked: boolean; createdAt: string; amr: Array<{ method: string; timestamp: number }> }>
+  > {
     return (await this.call<{ sessions: never[] }>('sessions')).sessions;
+  }
+
+  /** Magic links minted with the service role (admin generate_link): who, and used / expired. */
+  async magicLinks(): Promise<MagicLinkSummary[]> {
+    return (await this.call<{ magicLinks: MagicLinkSummary[] }>('magiclinks')).magicLinks;
+  }
+
+  /** Lifetime (seconds, >= 1) of magic links minted from now on. */
+  async setMagicLinkTtl(seconds: number): Promise<void> {
+    await this.call('config', { body: { magicLinkTtlSeconds: seconds } });
+  }
+
+  /** Re-reads the database catalog after ad-hoc DDL (PostgREST's "reload schema"); reset restores it. */
+  async reloadSchema(): Promise<{ relations: number; functions: number }> {
+    return this.call('schema/reload', { method: 'POST', body: {} });
+  }
+
+  /**
+   * Registers a confirmed password account with the Auth admin API (service role), the way an
+   * operator provisions a user; profile / roles / site assignments are then plain SQL.
+   */
+  async createAuthUser(email: string, password: string): Promise<string> {
+    const res = await retryFetch(`${this.baseUrl}/auth/v1/admin/users`, {
+      method: 'POST',
+      headers: { apikey: TEST_SERVICE_ROLE_KEY, authorization: `Bearer ${TEST_SERVICE_ROLE_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password, email_confirm: true })
+    });
+    const body = (await res.json()) as { id?: string; msg?: string };
+    if (!res.ok || typeof body.id !== 'string') throw new Error(`create Auth user ${email}: HTTP ${res.status} ${body.msg ?? ''}`);
+    return body.id;
   }
 
   /** Shorter access tokens (seconds, >= 5) to exercise token refresh. */

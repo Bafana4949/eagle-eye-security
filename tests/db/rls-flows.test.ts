@@ -94,16 +94,13 @@ describe('guard: identity and site data the app loads', () => {
     assert.deepEqual(org.rows, [{ id: fx.orgA }]);
   });
 
-  test('guard can update their own display fields (name, phone, language)', async () => {
+  test('guard can update their own display fields (phone, language); the name is admin-controlled', async () => {
     const g = fx.users.guardA;
-    const r = await tryAsUser(
-      db,
-      g,
-      `UPDATE profiles SET first_name = 'Sipho', phone_number = '0821234567', preferred_language = 'zu' WHERE id = $1`,
-      [g]
-    );
+    const r = await tryAsUser(db, g, `UPDATE profiles SET phone_number = '0821234567', preferred_language = 'zu' WHERE id = $1`, [g]);
     assertAllowed(r);
     assert.equal(r.affectedRows, 1);
+    // A guard's name is a button on the patrol phone (20261001000200_patrol_devices.sql).
+    assertRefused(await tryAsUser(db, g, `UPDATE profiles SET first_name = 'Sipho' WHERE id = $1`, [g]), '42501', 'own name');
   });
 });
 
